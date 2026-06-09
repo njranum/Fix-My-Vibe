@@ -1,0 +1,11 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: fix-my-vibe
+metadata:
+  template: fix-my-vibe@0.0.1
+
+services:
+  api:
+    project: .
+    language: py
+    host: appservice

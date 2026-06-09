@@ -1,0 +1,4 @@
+azure-ai-projects==1.0.0b11
+azure-identity>=1.15.0
+python-dotenv>=1.0.0
+tavily-python>=0.3.0
