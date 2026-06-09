@@ -33,7 +33,7 @@ def run_agent_with_tools(
     agent_id: str,
     thread_id: str,
     tool_handlers: dict[str, Callable],
-    max_iterations: int = 20,
+    max_iterations: int = 120,
 ) -> str:
     """
     Run a Foundry agent, handling function tool calls in a polling loop.
@@ -42,7 +42,12 @@ def run_agent_with_tools(
     run = client.agents.runs.create(thread_id=thread_id, agent_id=agent_id)
     iterations = 0
 
-    while run.status in ("queued", "in_progress", "requires_action") and iterations < max_iterations:
+    while str(run.status) in (
+        "queued", "in_progress", "requires_action",
+        "RunStatus.QUEUED", "RunStatus.IN_PROGRESS", "RunStatus.REQUIRES_ACTION",
+        "<RunStatus.QUEUED: 'queued'>", "<RunStatus.IN_PROGRESS: 'in_progress'>",
+        "<RunStatus.REQUIRES_ACTION: 'requires_action'>",
+    ) and iterations < max_iterations:
         iterations += 1
 
         if run.status == "requires_action":
@@ -75,6 +80,9 @@ def run_agent_with_tools(
             time.sleep(0.5)
             run = client.agents.runs.get(thread_id=thread_id, run_id=run.id)
 
+    if hasattr(run, "last_error") and run.last_error:
+        log.error("Run failed: %s", run.last_error)
+        raise RuntimeError(f"Foundry run failed: {run.last_error}")
     return run.status
 
 
@@ -94,31 +102,59 @@ def get_last_assistant_message(client, thread_id: str) -> str:
 
 
 def get_last_assistant_message_with_reasoning(client, thread_id: str) -> tuple[str, str]:
-    """Return (clean_answer, reasoning_trace) from the last assistant message.
+    """Return (raw_text, reasoning_trace) from the last assistant message.
 
-    The reasoning_trace is the raw content of the <think> block, suitable for
-    surfacing as a visible reasoning trace in demos and --verbose output.
+    Phi-4-reasoning emits chain-of-thought as plain text before the JSON.
+    We return the full raw text (parse_json_response handles extraction) and
+    treat everything before the final { as the reasoning trace for --verbose.
     """
     for msg in client.agents.messages.list(thread_id=thread_id):
         if msg.role == "assistant":
             raw = msg.content[0].text.value
+            # Try <think> block first; fall back to text before the last JSON {
             reasoning = extract_think_block(raw)
-            clean = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
-            return clean, reasoning
+            if not reasoning:
+                last_brace = raw.rfind("{")
+                reasoning = raw[:last_brace].strip() if last_brace > 0 else ""
+            return raw, reasoning
     return "", ""
 
 
 def parse_json_response(text: str) -> dict:
-    """Parse JSON from model output, stripping <think> blocks and markdown fences."""
-    # Strip <think> blocks first — Phi-4-reasoning emits these before the JSON answer
+    """Parse JSON from model output.
+
+    Phi-4-reasoning via the inference API emits its chain-of-thought as plain text
+    before the JSON answer (no <think> tags). We try several extraction strategies
+    in order, returning the first that produces valid JSON.
+    """
+    # Strategy 1: strip <think> blocks (used by some model configs) and parse directly
     cleaned = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
     if cleaned.startswith("```"):
         lines = cleaned.splitlines()
         cleaned = "\n".join(lines[1:-1]) if len(lines) > 2 else cleaned
     try:
         return json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        return {"error": f"Failed to parse JSON: {e}", "raw": text}
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: find the last {...} block in the text — model puts JSON at the end
+    last_brace = text.rfind("{")
+    if last_brace != -1:
+        candidate = text[last_brace:]
+        try:
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: extract first {...} block via regex (handles embedded JSON)
+    match = re.search(r"\{.*\}", text, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+
+    return {"error": "Failed to parse JSON from model response", "raw": text[:500]}
 
 
 def create_thread_and_send(client, message: str) -> str:

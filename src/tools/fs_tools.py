@@ -139,7 +139,7 @@ def check_path_tools() -> dict:
         "claude_code": ["claude"],
         "cursor":      ["cursor"],
         "aider":       ["aider"],
-        "copilot":     ["gh"],
+        "copilot":     [],  # no standalone CLI — detected via config files (Layer 1) and VS Code extensions (Layer 3)
         "windsurf":    ["windsurf"],
         "cline":       [],
         "continue":    [],
