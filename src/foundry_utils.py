@@ -50,7 +50,11 @@ def run_agent_with_tools(
     ) and iterations < max_iterations:
         iterations += 1
 
-        if run.status == "requires_action":
+        if str(run.status) in (
+            "requires_action",
+            "RunStatus.REQUIRES_ACTION",
+            "<RunStatus.REQUIRES_ACTION: 'requires_action'>",
+        ):
             tool_calls = run.required_action.submit_tool_outputs.tool_calls
             outputs = []
             for tc in tool_calls:

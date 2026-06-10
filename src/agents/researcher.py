@@ -220,67 +220,29 @@ def run(input: dict) -> dict:
 
 
 def run_with_foundry(client, scan_result: dict) -> dict:
-    """Run the Researcher agent using Azure AI Foundry.
+    """Run the Researcher agent using Azure AI Foundry Agents API.
 
-    Phi-4-reasoning does not support function calling, so Tavily searches run in Python
-    directly. The search results plus static KB are passed to Phi-4 via the inference API
-    for a synthesis summary and any additional nuance. The structured research JSON is built
-    from the static KB enriched with Tavily URLs.
+    o4-mini decides what to search for and how many queries to run based on
+    the scan result. The model chooses queries — Python only executes them.
     """
-    detected_tools = scan_result.get("detected_tools", [])
-    detected_stack = scan_result.get("detected_stack", [])
-
-    # Build structured result from static KB (same as local mode)
-    base_result = run({"detected_tools": detected_tools, "detected_stack": detected_stack})
-
-    # Run Tavily searches in Python and collect URLs + snippets to enrich the KB
-    tavily_key = os.environ.get("TAVILY_API_KEY")
-    search_snippets: list[str] = []
-    if tavily_key and detected_tools:
-        search_fn = _make_tool_handlers()["search_web"]
-        stack_str = " ".join(detected_stack[:3]) if detected_stack else ""
-        for tool in detected_tools[:3]:  # limit to 3 tools to stay within time budget
-            query = f"{tool.replace('_', ' ')} {stack_str} configuration best practices 2025"
-            try:
-                results = search_fn({"query": query})
-                for r in results.get("results", [])[:2]:
-                    url = r.get("url", "")
-                    snippet = r.get("content", "")[:300]
-                    if url:
-                        search_snippets.append(f"[{tool}] {url}\n{snippet}")
-                        # Attach URLs to the static research entry
-                        if tool in base_result.get("research", {}):
-                            base_result["research"][tool].setdefault("source_urls", []).append(url)
-            except Exception:
-                pass
-
-    # Ask Phi-4 to synthesise the findings and surface anything the static KB missed
-    context_str = "\n\n".join(search_snippets) if search_snippets else "No web search results available."
-    tools_str = ", ".join(detected_tools) if detected_tools else "none"
-    stack_str = ", ".join(detected_stack) if detected_stack else "unknown"
-
-    reasoning_prompt = (
-        f"You are a senior developer researching AI coding tool best practices.\n\n"
-        f"Project stack: {stack_str}\n"
-        f"Detected tools: {tools_str}\n\n"
-        f"Web search results:\n{context_str}\n\n"
-        f"Write 2-3 sentences summarising the most important configuration advice for these tools "
-        f"with this stack. Call out any security-critical steps (e.g. .cursorignore for Cursor). "
-        f"Then on a new line write: CONFIDENCE: high, medium, or low (your confidence in the advice)."
+    agent = client.agents.create_agent(
+        model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+        name="fix-my-vibe-researcher",
+        instructions=RESEARCHER_INSTRUCTIONS,
+        tools=_get_tool_definitions(),
     )
-
-    model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
-    chat = client.inference.get_chat_completions_client()
-    response = chat.complete(
-        model=model,
-        messages=[{"role": "user", "content": reasoning_prompt}],
+    task_message = (
+        "Research current best practices for the AI coding tools and stack detected in this project. "
+        "Use search_web to find official documentation, community best practices, and security guidance. "
+        "Choose your own queries based on what was detected — search for each tool combined with the stack. "
+        "Return a structured JSON research result.\n\n"
+        f"Scan result:\n{json.dumps(scan_result, indent=2)}"
     )
-    raw = response.choices[0].message.content
-
-    base_result["mode"] = "foundry"
-    base_result["search_summary"] = (
-        f"Tavily searched {len(detected_tools[:3])} tool(s). "
-        f"{len(search_snippets)} results collected."
-    ) if search_snippets else "Tavily unavailable — static KB used."
-    base_result["_reasoning_trace"] = raw
-    return base_result
+    thread_id = create_thread_and_send(client, task_message)
+    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers())
+    raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
+    result = parse_json_response(raw)
+    result["_reasoning_trace"] = reasoning
+    result["mode"] = "foundry"
+    client.agents.delete_agent(agent.id)
+    return result
