@@ -222,46 +222,41 @@ def run(input: dict, confirm_fn=None) -> dict:
 
 
 def run_with_foundry(client, project_path: str, action_plan: dict, confirmed_ranks: list[int]) -> dict:
-    """Run the Executor agent using Azure AI Foundry."""
-    model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
+    """Run the Executor agent using Azure AI Foundry.
 
-    tool_handlers = {
-        "write_file": lambda args: write_file(
-            args["project_path"], args["relative_path"], args["content"]
-        ),
-    }
+    File writes happen locally — this is safety-critical and must be deterministic.
+    Phi-4-reasoning is used only to produce a natural-language summary of what was done,
+    which becomes the _reasoning_trace visible in --verbose mode.
+    """
+    # Execute locally — confirmed_ranks already passed so no gate needed here
+    confirm_fn = lambda plan: confirmed_ranks
+    result = run(
+        {"project_path": project_path, "action_plan": action_plan},
+        confirm_fn=confirm_fn,
+    )
 
-    agent = client.agents.create_agent(
-        model=model,
-        name="fix-my-vibe-executor",
-        instructions=EXECUTOR_INSTRUCTIONS,
-        tools=_get_tool_definitions(),
+    # Ask Phi-4 to narrate what happened — useful trace for --verbose
+    executed = result.get("executed", [])
+    errors = result.get("errors", [])
+
+    reasoning_prompt = (
+        f"You are a senior developer. Files were just written to a project. "
+        f"Narrate what happened in 2-3 sentences for a developer log.\n\n"
+        f"Written files: {json.dumps([e['file'] for e in executed])}\n"
+        f"Errors: {json.dumps(errors)}\n"
+        f"Backups created: {sum(1 for e in executed if e.get('backed_up'))} file(s)\n\n"
+        f"Be specific about what each file does for the developer's AI tool setup."
     )
 
     try:
-        prompt = (
-            f"Execute the confirmed actions from this plan.\n\n"
-            f"project_path: {project_path}\n"
-            f"confirmed_actions: {confirmed_ranks}\n\n"
-            f"action_plan:\n{json.dumps(action_plan, indent=2)}"
+        model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
+        chat = client.inference.get_chat_completions_client()
+        response = chat.complete(
+            model=model,
+            messages=[{"role": "user", "content": reasoning_prompt}],
         )
-        thread_id = create_thread_and_send(client, prompt)
+        result["_reasoning_trace"] = response.choices[0].message.content
+    except Exception:
+        pass  # reasoning trace is optional — don't fail the execution
 
-        status = run_agent_with_tools(
-            client=client,
-            agent_id=agent.id,
-            thread_id=thread_id,
-            tool_handlers=tool_handlers,
-        )
-
-        if status != "completed":
-            raise RuntimeError(f"Executor run ended with status: {status}")
-
-        result_text, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
-        result = parse_json_response(result_text)
-        if reasoning:
-            result["_reasoning_trace"] = reasoning
-        return result
-
-    finally:
-        client.agents.delete_agent(agent.id)
+    return result

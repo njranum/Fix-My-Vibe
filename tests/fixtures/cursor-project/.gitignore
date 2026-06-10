@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+
+# Environment and secrets
+.env
+.env.local
+.env.*
+*.pem
+*.key

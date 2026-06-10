@@ -71,7 +71,7 @@ def main() -> None:
         confirm_fn = lambda plan: [a["rank"] for a in plan.get("actions", [])]
 
     if args.scan_only:
-        _run_scan_only(str(project_path), args.verbose, args.output_json)
+        _run_scan_only(str(project_path), args.verbose, args.output_json, use_local=args.local)
         return
 
     if args.local or not os.environ.get("FOUNDRY_PROJECT_ENDPOINT"):
@@ -89,11 +89,18 @@ def main() -> None:
         _print_final_summary(result)
 
 
-def _run_scan_only(project_path: str, verbose: bool, output_json: bool) -> None:
-    from src.agents.scanner import run as scanner_run
-
+def _run_scan_only(project_path: str, verbose: bool, output_json: bool, use_local: bool = False) -> None:
     print(f"\n  Fix My Vibe — scan only: {project_path}\n")
-    result = scanner_run({"project_path": project_path})
+
+    if not use_local and os.environ.get("FOUNDRY_PROJECT_ENDPOINT"):
+        from src.foundry_utils import get_client
+        from src.agents.scanner import run_with_foundry
+        print("  Using Azure Foundry (pass --local to force local mode)\n")
+        client = get_client()
+        result = run_with_foundry(client, project_path)
+    else:
+        from src.agents.scanner import run as scanner_run
+        result = scanner_run({"project_path": project_path})
 
     if output_json:
         print(json.dumps(result, indent=2))
@@ -108,7 +115,13 @@ def _run_scan_only(project_path: str, verbose: bool, output_json: bool) -> None:
     print("────────────────────────────────────────────────────────")
 
     if verbose:
-        print("\nFull scan result:")
+        reasoning = result.pop("_reasoning_trace", None)
+        if reasoning:
+            print("\n── Phi-4 Reasoning Trace ──────────────────────────────────")
+            for line in reasoning.splitlines():
+                print(f"  {line}")
+            print("────────────────────────────────────────────────────────────")
+        print("\nFull scan result (JSON):")
         print(json.dumps(result, indent=2))
 
 
