@@ -224,54 +224,30 @@ def run(input: dict) -> dict:
 
 
 def run_with_foundry(client, project_path: str) -> dict:
-    """Run the Scanner agent using Azure AI Foundry.
+    """Run the Scanner agent using Azure AI Foundry Agents API.
 
-    Tool collection runs locally (Phi-4-reasoning does not support function calling
-    in the Agents API). Phi-4-reasoning is called via the inference API for a plain-text
-    reasoning summary and priority classification — tasks it handles reliably.
-    The full reasoning chain is stored as _reasoning_trace for --verbose / demo.
+    o4-mini receives tool definitions and decides which tools to call,
+    in what order, and what to look for — Python only executes the calls.
     """
-    # Build the structured result using local tools — guaranteed correct schema
-    result = run({"project_path": project_path})
-
-    # Ask Phi-4-reasoning to reason over the findings
-    tools_summary = json.dumps({
-        "detected_tools": result["detected_tools"],
-        "detected_stack": result["detected_stack"],
-        "security_issues": result["security_issues"],
-        "missing_configs": result["missing_configs"],
-        "existing_configs": {
-            tool: data.get("audit", {}).get("quality_concerns", [])
-            for tool, data in result.get("existing_configs", {}).items()
-        },
-        "conventions": result.get("conventions", {}),
-    }, indent=2)
-
-    reasoning_prompt = (
-        "You are a senior developer reviewing an AI coding tool setup scan.\n\n"
-        f"Scan results for project at {project_path}:\n{tools_summary}\n\n"
-        "Write one paragraph (3-5 sentences) explaining what was found, what the most "
-        "important issues are, and what the developer should fix first. Focus on concrete "
-        "risks (e.g. exposed secrets, missing configs for detected tools). "
-        "Then on a new line write: PRIORITY: high, medium, or low."
+    abs_path = str(Path(project_path).resolve())
+    agent = client.agents.create_agent(
+        model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+        name="fix-my-vibe-scanner",
+        instructions=SCANNER_INSTRUCTIONS,
+        tools=_get_tool_definitions(),
     )
-
-    model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
-    chat = client.inference.get_chat_completions_client()
-    response = chat.complete(
-        model=model,
-        messages=[{"role": "user", "content": reasoning_prompt}],
+    task_message = (
+        f"Scan the project at {abs_path}. "
+        "Use the available tools to: detect AI coding tools (config files, PATH, VS Code extensions), "
+        "identify the tech stack, find security issues (exposed .env, missing .cursorignore), "
+        "audit any existing AI config files for quality, and infer project conventions. "
+        "Return a complete ScanResult JSON."
     )
-
-    raw = response.choices[0].message.content
-
-    # Extract priority from the model's output
-    lines = [l.strip() for l in raw.strip().splitlines() if l.strip()]
-    priority_line = next((l for l in reversed(lines) if l.upper().startswith("PRIORITY:")), None)
-    if priority_line:
-        p = priority_line.split(":", 1)[1].strip().lower()
-        if p in ("high", "medium", "low"):
-            result["priority"] = p
-
-    result["_reasoning_trace"] = raw
+    thread_id = create_thread_and_send(client, task_message)
+    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers(abs_path))
+    raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
+    result = parse_json_response(raw)
+    result["_reasoning_trace"] = reasoning
+    result.setdefault("project_path", abs_path)
+    client.agents.delete_agent(agent.id)
     return result

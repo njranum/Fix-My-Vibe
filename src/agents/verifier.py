@@ -101,6 +101,17 @@ def _get_tool_definitions() -> list[dict]:
     ]
 
 
+def _make_tool_handlers(project_path: str) -> dict:
+    return {
+        "verify_file": lambda args: verify_file(
+            project_path, args["relative_path"], args.get("expected_sections", [])
+        ),
+        "read_existing_context_file": lambda args: read_existing_context_file(
+            project_path, args["filename"]
+        ),
+    }
+
+
 def run(input: dict) -> dict:
     """Standalone interface: verify written files without Foundry."""
     project_path = input.get("project_path", "")
@@ -154,57 +165,40 @@ def run(input: dict) -> dict:
 
 
 def run_with_foundry(client, project_path: str, execution_result: dict, action_plan: dict) -> dict:
-    """Run the Verifier agent using Azure AI Foundry.
+    """Run the Verifier agent using Azure AI Foundry Agents API.
 
-    Mechanical section-presence checks run locally (deterministic and fast). Phi-4-reasoning
-    then performs a qualitative review of the generated files — going beyond section existence
-    to ask whether the content is actually useful for the detected stack.
+    o4-mini decides what to check and makes qualitative judgments about file quality.
+    Python executes the verify_file and read_existing_context_file calls.
     """
-    # Run mechanical verification locally
-    result = run({
-        "project_path": project_path,
-        "execution_result": execution_result,
-        "action_plan": action_plan,
-    })
+    abs_path = str(Path(project_path).resolve())
+    executed = execution_result.get("executed", [])
+    actions_by_file = {a.get("file"): a for a in action_plan.get("actions", [])}
+    verification_tasks = [
+        {
+            "file": item["file"],
+            "expected_sections": actions_by_file.get(item["file"], {}).get("expected_sections", []),
+        }
+        for item in executed
+    ]
 
-    # Build a summary of what was written and verified for Phi-4 to review
-    verification_summary = json.dumps({
-        "project_path": project_path,
-        "verification_results": result.get("verification_results", []),
-        "overall_pass": result.get("overall_pass", False),
-        "recommendations": result.get("recommendations", []),
-    }, indent=2)
-
-    reasoning_prompt = (
-        "You are a senior developer reviewing config files just written to a project.\n\n"
-        f"Verification results:\n{verification_summary}\n\n"
-        "In 3-5 sentences:\n"
-        "1. Are the written files likely to actually improve the developer's AI tool experience, "
-        "   or are they just template boilerplate?\n"
-        "2. What's the single most important thing the developer should still do manually?\n"
-        "3. Any risk of a written file causing problems?\n\n"
-        "End with: QUALITY: excellent, good, acceptable, or needs_work"
+    agent = client.agents.create_agent(
+        model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+        name="fix-my-vibe-verifier",
+        instructions=VERIFIER_INSTRUCTIONS,
+        tools=_get_tool_definitions(),
     )
-
-    try:
-        model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
-        chat = client.inference.get_chat_completions_client()
-        response = chat.complete(
-            model=model,
-            messages=[{"role": "user", "content": reasoning_prompt}],
-        )
-        raw = response.choices[0].message.content
-        result["_reasoning_trace"] = raw
-
-        # Extract quality rating if present
-        for line in reversed(raw.strip().splitlines()):
-            stripped = line.strip().upper()
-            if stripped.startswith("QUALITY:"):
-                quality = stripped.split(":", 1)[1].strip().lower()
-                if quality in ("excellent", "good", "acceptable", "needs_work"):
-                    result["quality_rating"] = quality
-                break
-    except Exception:
-        pass  # reasoning trace is optional
-
+    task_message = (
+        f"Verify the files written to {abs_path}. "
+        "For each file: call verify_file to check existence and sections, "
+        "then call read_existing_context_file to assess content quality. "
+        "Make qualitative judgments — flag generic boilerplate even if sections are present. "
+        "Return a VerificationResult JSON.\n\n"
+        f"Files to verify:\n{json.dumps(verification_tasks, indent=2)}"
+    )
+    thread_id = create_thread_and_send(client, task_message)
+    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers(abs_path))
+    raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
+    result = parse_json_response(raw)
+    result["_reasoning_trace"] = reasoning
+    client.agents.delete_agent(agent.id)
     return result

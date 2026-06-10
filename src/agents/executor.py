@@ -74,6 +74,16 @@ def _get_tool_definitions() -> list[dict]:
     ]
 
 
+def _make_tool_handlers(project_path: str) -> dict:
+    return {
+        "write_file": lambda args: write_file(
+            project_path,  # always use the pre-validated path, not what the model passes
+            args["relative_path"],
+            args["content"],
+        )
+    }
+
+
 def _display_plan(action_plan: dict) -> None:
     """Pretty-print the action plan to the terminal."""
     actions = action_plan.get("actions", [])
@@ -222,41 +232,45 @@ def run(input: dict, confirm_fn=None) -> dict:
 
 
 def run_with_foundry(client, project_path: str, action_plan: dict, confirmed_ranks: list[int]) -> dict:
-    """Run the Executor agent using Azure AI Foundry.
+    """Run the Executor agent using Azure AI Foundry Agents API.
 
-    File writes happen locally — this is safety-critical and must be deterministic.
-    Phi-4-reasoning is used only to produce a natural-language summary of what was done,
-    which becomes the _reasoning_trace visible in --verbose mode.
+    Confirmation gate already ran in Python (confirmed_ranks is pre-validated).
+    o4-mini calls write_file for each confirmed action — actual file I/O happens
+    when the model's tool calls are executed locally.
     """
-    # Execute locally — confirmed_ranks already passed so no gate needed here
-    confirm_fn = lambda plan: confirmed_ranks
-    result = run(
-        {"project_path": project_path, "action_plan": action_plan},
-        confirm_fn=confirm_fn,
+    abs_path = str(Path(project_path).resolve())
+    actions = action_plan.get("actions", [])
+    confirmed_actions = [
+        a for a in actions
+        if a.get("rank") in confirmed_ranks
+        and a.get("action") != "improve"
+        and a.get("content") is not None
+    ]
+
+    if not confirmed_actions:
+        return {
+            "executed": [],
+            "skipped": [{"rank": a["rank"], "file": a["file"], "reason": "user cancelled"} for a in actions],
+            "errors": [],
+            "summary": "No files written — user cancelled.",
+        }
+
+    agent = client.agents.create_agent(
+        model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+        name="fix-my-vibe-executor",
+        instructions=EXECUTOR_INSTRUCTIONS,
+        tools=_get_tool_definitions(),
     )
-
-    # Ask Phi-4 to narrate what happened — useful trace for --verbose
-    executed = result.get("executed", [])
-    errors = result.get("errors", [])
-
-    reasoning_prompt = (
-        f"You are a senior developer. Files were just written to a project. "
-        f"Narrate what happened in 2-3 sentences for a developer log.\n\n"
-        f"Written files: {json.dumps([e['file'] for e in executed])}\n"
-        f"Errors: {json.dumps(errors)}\n"
-        f"Backups created: {sum(1 for e in executed if e.get('backed_up'))} file(s)\n\n"
-        f"Be specific about what each file does for the developer's AI tool setup."
+    task_message = (
+        f"Execute the following confirmed actions for the project at {abs_path}. "
+        "Call write_file for each action using the exact content provided — do not modify it. "
+        "Return an ExecutionResult JSON.\n\n"
+        f"Confirmed actions:\n{json.dumps(confirmed_actions, indent=2)}"
     )
-
-    try:
-        model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
-        chat = client.inference.get_chat_completions_client()
-        response = chat.complete(
-            model=model,
-            messages=[{"role": "user", "content": reasoning_prompt}],
-        )
-        result["_reasoning_trace"] = response.choices[0].message.content
-    except Exception:
-        pass  # reasoning trace is optional — don't fail the execution
-
+    thread_id = create_thread_and_send(client, task_message)
+    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers(abs_path))
+    raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
+    result = parse_json_response(raw)
+    result["_reasoning_trace"] = reasoning
+    client.agents.delete_agent(agent.id)
     return result

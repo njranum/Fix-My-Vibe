@@ -29,10 +29,18 @@ You will receive a JSON object with:
 
 Your job:
 1. Analyse the gap between the current state (scan_result) and best practices (research)
-2. Infer the project's coding conventions from the scan data (file structure, linters found, package files)
-3. Rank all required fixes by impact and urgency
-4. For each fix, specify EXACTLY what file to create/update and what sections it must contain
-5. Generate the ACTUAL content for each config file, tailored to the detected stack and conventions
+2. Rank all required fixes by impact and urgency (security always first)
+3. Generate the ACTUAL complete file content for each config file
+
+CRITICAL CONTENT RULES:
+- Write COMPLETE file content for every action — no placeholders, no "add here" comments, no template markers
+- Two different projects MUST produce different CLAUDE.md files — base content on the actual scan data
+- For CLAUDE.md: use readme_summary from conventions as the Overview; include the exact test_command,
+  build_command, lint_command detected; reference actual key_directories; add DO NOT rules specific to the stack
+- For .cursorrules: reference the actual detected stack and frameworks; include detected linting/test tools
+- For .cursorignore: always include .env, .env.*, *.pem, *.key, node_modules/, __pycache__/, .venv/
+- For .gitignore: generate a comprehensive file appropriate to the detected stack
+- Security actions are ALWAYS rank 1 — never deprioritize security fixes
 
 Output a JSON ActionPlan with this structure:
 {
@@ -44,20 +52,9 @@ Output a JSON ActionPlan with this structure:
       "file": "CLAUDE.md",
       "priority": "high",
       "reason": "Claude Code detected (claude CLI on PATH) but no CLAUDE.md exists",
-      "content": "# Project Name\\n\\n## Overview\\n...full file content here...",
-      "expected_sections": ["Overview", "Build commands", "Test commands", "DO NOT"],
+      "content": "# cursor-project\\n\\n## Overview\\nA FastAPI REST API...\\n\\n## Commands\\n- **Test:** `pytest`\\n...",
+      "expected_sections": ["Overview", "Commands", "DO NOT"],
       "estimated_tokens": 450
-    },
-    {
-      "rank": 2,
-      "tool": "security",
-      "action": "create",
-      "file": ".gitignore",
-      "priority": "high",
-      "reason": ".env file present but .gitignore missing — secrets at risk",
-      "content": ".env\\n.env.local\\n__pycache__/\\n*.pyc\\n",
-      "expected_sections": [".env"],
-      "estimated_tokens": 30
     }
   ],
   "security_actions": [
@@ -68,18 +65,10 @@ Output a JSON ActionPlan with this structure:
       "description": "Add .env to .gitignore immediately"
     }
   ],
-  "convention_summary": "Python project using FastAPI. Uses pytest for testing, ruff for linting. Snake_case file naming.",
-  "plan_summary": "3 actions required. 2 high priority (security + missing CLAUDE.md), 1 medium (improve .cursorrules).",
+  "convention_summary": "Python project using FastAPI. Tests run with pytest. Lint with ruff.",
+  "plan_summary": "3 actions required. 2 high priority, 1 medium.",
   "total_actions": 3
 }
-
-Rules for generating config file content:
-- CLAUDE.md: Include project overview (inferred from stack + dir structure), exact build/test commands found,
-  detected linters, key directories, and DO NOT rules based on common mistakes for the stack
-- .cursorrules: Tailored to the stack with specific framework versions, naming conventions, error handling patterns
-- .cursorignore: Must include .env, .env.local, .env.*, *.pem, *.key, node_modules/, __pycache__/
-- .gitignore: Comprehensive for the detected stack
-- Security actions are ALWAYS rank 1 — never deprioritize security fixes
 
 Return ONLY the JSON — no markdown fences, no preamble.
 """
@@ -391,56 +380,27 @@ def run(input: dict) -> dict:
 
 
 def run_with_foundry(client, scan_result: dict, research: dict) -> dict:
-    """Run the Planner agent using Azure AI Foundry.
+    """Run the Planner agent using Azure AI Foundry Agents API.
 
-    The structured ActionPlan (with generated file content) is built locally — this is the
-    deterministic part that must be correct. Phi-4-reasoning then reviews the plan via the
-    inference API and adds a reasoning trace explaining its priority decisions. This trace
-    is the money-shot for the Best Reasoning Agent demo.
+    Pure reasoning — no tools. o4-mini analyses the scan + research and generates
+    the actual file content for each action. Not a template, not a review.
     """
-    # Build the full ActionPlan using local Python logic
-    result = run({"scan_result": scan_result, "research": research})
-
-    # Ask Phi-4 to reason about the plan — this is pure chain-of-thought, no tools needed
-    plan_summary_for_model = json.dumps({
-        "security_issues": scan_result.get("security_issues", []),
-        "detected_tools": scan_result.get("detected_tools", []),
-        "missing_configs": scan_result.get("missing_configs", {}),
-        "detected_stack": scan_result.get("detected_stack", []),
-        "actions": [
-            {
-                "rank": a["rank"],
-                "tool": a["tool"],
-                "action": a["action"],
-                "file": a["file"],
-                "priority": a["priority"],
-                "reason": a["reason"],
-            }
-            for a in result.get("actions", [])
-        ],
-    }, indent=2)
-
-    reasoning_prompt = (
-        "You are a senior security-conscious developer reviewing an action plan for fixing "
-        "an AI coding tool setup in a developer project.\n\n"
-        f"Plan to review:\n{plan_summary_for_model}\n\n"
-        "Reason step-by-step:\n"
-        "1. Are the security issues correctly prioritised as rank 1? If not, say why.\n"
-        "2. For each detected tool that's missing a config, is the proposed fix correct?\n"
-        "3. Are there any risks in applying these changes (e.g. overwriting a file that "
-        "   was intentionally minimal)?\n"
-        "4. What should the developer do FIRST and why?\n\n"
-        "Write your analysis as 4-6 sentences of clear reasoning. End with: "
-        "VERDICT: approved or needs_revision"
+    agent = client.agents.create_agent(
+        model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
+        name="fix-my-vibe-planner",
+        instructions=PLANNER_INSTRUCTIONS,
+        tools=[],
     )
-
-    model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
-    chat = client.inference.get_chat_completions_client()
-    response = chat.complete(
-        model=model,
-        messages=[{"role": "user", "content": reasoning_prompt}],
+    task_message = (
+        "Analyse the scan result and research below. "
+        "Generate a complete ActionPlan JSON with actual file content for each action. "
+        "Base CLAUDE.md on the real readme_summary, commands, and stack found — not a template.\n\n"
+        f"{json.dumps({'scan_result': scan_result, 'research': research}, indent=2)}"
     )
-    raw = response.choices[0].message.content
-
-    result["_reasoning_trace"] = raw
+    thread_id = create_thread_and_send(client, task_message)
+    run_agent_with_tools(client, agent.id, thread_id, {})
+    raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
+    result = parse_json_response(raw)
+    result["_reasoning_trace"] = reasoning
+    client.agents.delete_agent(agent.id)
     return result
