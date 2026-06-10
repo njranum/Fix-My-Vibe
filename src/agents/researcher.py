@@ -1,6 +1,6 @@
 """
 src/agents/researcher.py
-Researcher agent: uses Bing Grounding to fetch current best practices
+Researcher agent: uses Tavily to fetch current best practices
 for each detected AI tool and the project's stack.
 Produces structured research that feeds the Planner.
 """
