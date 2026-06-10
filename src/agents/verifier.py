@@ -154,49 +154,57 @@ def run(input: dict) -> dict:
 
 
 def run_with_foundry(client, project_path: str, execution_result: dict, action_plan: dict) -> dict:
-    """Run the Verifier agent using Azure AI Foundry."""
-    model = os.environ.get("FOUNDRY_MODEL_MINI_DEPLOYMENT_NAME", "Phi-4-reasoning")
+    """Run the Verifier agent using Azure AI Foundry.
 
-    tool_handlers = {
-        "verify_file": lambda args: verify_file(
-            args["project_path"], args["relative_path"], args.get("expected_sections", [])
-        ),
-        "read_existing_context_file": lambda args: read_existing_context_file(
-            args["project_path"], args["filename"]
-        ),
-    }
+    Mechanical section-presence checks run locally (deterministic and fast). Phi-4-reasoning
+    then performs a qualitative review of the generated files — going beyond section existence
+    to ask whether the content is actually useful for the detected stack.
+    """
+    # Run mechanical verification locally
+    result = run({
+        "project_path": project_path,
+        "execution_result": execution_result,
+        "action_plan": action_plan,
+    })
 
-    agent = client.agents.create_agent(
-        model=model,
-        name="fix-my-vibe-verifier",
-        instructions=VERIFIER_INSTRUCTIONS,
-        tools=_get_tool_definitions(),
+    # Build a summary of what was written and verified for Phi-4 to review
+    verification_summary = json.dumps({
+        "project_path": project_path,
+        "verification_results": result.get("verification_results", []),
+        "overall_pass": result.get("overall_pass", False),
+        "recommendations": result.get("recommendations", []),
+    }, indent=2)
+
+    reasoning_prompt = (
+        "You are a senior developer reviewing config files just written to a project.\n\n"
+        f"Verification results:\n{verification_summary}\n\n"
+        "In 3-5 sentences:\n"
+        "1. Are the written files likely to actually improve the developer's AI tool experience, "
+        "   or are they just template boilerplate?\n"
+        "2. What's the single most important thing the developer should still do manually?\n"
+        "3. Any risk of a written file causing problems?\n\n"
+        "End with: QUALITY: excellent, good, acceptable, or needs_work"
     )
 
     try:
-        prompt = (
-            f"Verify these written files.\n\n"
-            f"project_path: {project_path}\n\n"
-            f"execution_result:\n{json.dumps(execution_result, indent=2)}\n\n"
-            f"action_plan (for expected_sections):\n{json.dumps(action_plan, indent=2)}"
+        model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
+        chat = client.inference.get_chat_completions_client()
+        response = chat.complete(
+            model=model,
+            messages=[{"role": "user", "content": reasoning_prompt}],
         )
-        thread_id = create_thread_and_send(client, prompt)
+        raw = response.choices[0].message.content
+        result["_reasoning_trace"] = raw
 
-        status = run_agent_with_tools(
-            client=client,
-            agent_id=agent.id,
-            thread_id=thread_id,
-            tool_handlers=tool_handlers,
-        )
+        # Extract quality rating if present
+        for line in reversed(raw.strip().splitlines()):
+            stripped = line.strip().upper()
+            if stripped.startswith("QUALITY:"):
+                quality = stripped.split(":", 1)[1].strip().lower()
+                if quality in ("excellent", "good", "acceptable", "needs_work"):
+                    result["quality_rating"] = quality
+                break
+    except Exception:
+        pass  # reasoning trace is optional
 
-        if status != "completed":
-            raise RuntimeError(f"Verifier run ended with status: {status}")
-
-        result_text, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
-        result = parse_json_response(result_text)
-        if reasoning:
-            result["_reasoning_trace"] = reasoning
-        return result
-
-    finally:
-        client.agents.delete_agent(agent.id)
+    return result

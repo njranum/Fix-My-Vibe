@@ -3,6 +3,7 @@ src/agents/scanner.py
 Scanner agent: wraps three-layer detection in a Foundry agent with function calling.
 Produces a structured ScanResult that feeds into Researcher and Planner.
 """
+
 import os
 import json
 import sys
@@ -203,6 +204,7 @@ def run(input: dict) -> dict:
         summary_parts.append(f"{len(sec)} security issue(s) found.")
 
     return {
+        "project_path": detection.get("project_path", project_path),
         "detected_tools": tools,
         "tool_evidence": detection.get("tool_evidence", {}),
         "detected_stack": stack,
@@ -210,6 +212,9 @@ def run(input: dict) -> dict:
         "security_issues": sec,
         "missing_configs": missing,
         "existing_configs": existing_configs,
+        "has_gitignore": detection.get("has_gitignore", False),
+        "gitignore_content": detection.get("gitignore_content", ""),
+        "detected_linters": detection.get("detected_linters", []),
         "conventions": conventions,
         "path_tools": detection.get("path_tools", {}),
         "vscode_tools": detection.get("vscode_tools", []),
@@ -221,14 +226,15 @@ def run(input: dict) -> dict:
 def run_with_foundry(client, project_path: str) -> dict:
     """Run the Scanner agent using Azure AI Foundry.
 
-    Tool collection runs locally (Phi-4-reasoning does not support function calling).
-    Phi-4-reasoning is called for the reasoning summary and priority — plain text tasks
-    it handles reliably. The reasoning trace is captured for --verbose / demo output.
+    Tool collection runs locally (Phi-4-reasoning does not support function calling
+    in the Agents API). Phi-4-reasoning is called via the inference API for a plain-text
+    reasoning summary and priority classification — tasks it handles reliably.
+    The full reasoning chain is stored as _reasoning_trace for --verbose / demo.
     """
     # Build the structured result using local tools — guaranteed correct schema
     result = run({"project_path": project_path})
 
-    # Ask Phi-4-reasoning to reason over the findings and produce a summary + priority
+    # Ask Phi-4-reasoning to reason over the findings
     tools_summary = json.dumps({
         "detected_tools": result["detected_tools"],
         "detected_stack": result["detected_stack"],
@@ -244,8 +250,9 @@ def run_with_foundry(client, project_path: str) -> dict:
     reasoning_prompt = (
         "You are a senior developer reviewing an AI coding tool setup scan.\n\n"
         f"Scan results for project at {project_path}:\n{tools_summary}\n\n"
-        "Write one paragraph (3-5 sentences) explaining what was found, "
-        "what the most important issues are, and what the developer should fix first. "
+        "Write one paragraph (3-5 sentences) explaining what was found, what the most "
+        "important issues are, and what the developer should fix first. Focus on concrete "
+        "risks (e.g. exposed secrets, missing configs for detected tools). "
         "Then on a new line write: PRIORITY: high, medium, or low."
     )
 
@@ -258,7 +265,7 @@ def run_with_foundry(client, project_path: str) -> dict:
 
     raw = response.choices[0].message.content
 
-    # Extract priority from the last line
+    # Extract priority from the model's output
     lines = [l.strip() for l in raw.strip().splitlines() if l.strip()]
     priority_line = next((l for l in reversed(lines) if l.upper().startswith("PRIORITY:")), None)
     if priority_line:
@@ -266,8 +273,5 @@ def run_with_foundry(client, project_path: str) -> dict:
         if p in ("high", "medium", "low"):
             result["priority"] = p
 
-    # diagnosis_summary built from structured data — clean and predictable
-    # The model output is kept as _reasoning_trace for --verbose demo
-    result["_reasoning_trace"] = raw
     result["_reasoning_trace"] = raw
     return result

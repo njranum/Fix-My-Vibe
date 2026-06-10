@@ -71,6 +71,7 @@ def run_full_detection(project_path: str) -> dict:
         "missing_configs": missing_configs,
         "security_issues": layer1.get("security_issues", []),
         "has_gitignore": layer1.get("has_gitignore", False),
+        "gitignore_content": layer1.get("gitignore_content", ""),
         "total_files_scanned": layer1.get("total_files_scanned", 0),
         "subdirectory_count": layer1.get("subdirectory_count", 0),
         "path_tools": layer2.get("path_tools", {}),

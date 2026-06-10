@@ -111,7 +111,7 @@ def run_with_foundry(project_path: str, confirm_fn=None, verbose: bool = False) 
         _print_reasoning_trace(scan_result, "Scanner")
     _print_scan_summary(scan_result)
 
-    print("\n[ 2/5 ] Researcher agent running (Bing Grounding)...")
+    print("\n[ 2/5 ] Researcher agent running (Tavily)...")
     research_result = researcher.run_with_foundry(client, scan_result)
     if verbose:
         _print_reasoning_trace(research_result, "Researcher")

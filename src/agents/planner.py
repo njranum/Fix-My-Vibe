@@ -93,31 +93,41 @@ def _generate_claude_md(scan_result: dict, conventions: dict) -> str:
     test_cmd = conventions.get("test_command")
     build_cmd = conventions.get("build_command")
     lint_cmd = conventions.get("lint_command")
+    type_check_cmd = conventions.get("type_check_command")
+    readme_summary = conventions.get("readme_summary")
 
     project_path = scan_result.get("project_path", "")
     project_name = Path(project_path).name if project_path else "Project"
 
-    lines = [
-        f"# {project_name}",
-        "",
-        "## Overview",
-        f"<!-- Add a 1-2 sentence description of what this project does -->",
-        "",
-        "## Stack",
-    ]
+    lines = [f"# {project_name}", ""]
+
+    # Overview: use README summary if available, otherwise placeholder
+    lines.append("## Overview")
+    if readme_summary:
+        lines.append(readme_summary)
+    else:
+        lines.append("<!-- Add a 1-2 sentence description of what this project does -->")
+    lines.append("")
+
+    # Stack
+    lines.append("## Stack")
     if stack:
         for s in stack:
             lines.append(f"- {s}")
-    lines.extend(["", "## Commands"])
+    if conventions.get("python_version"):
+        lines.append(f"- Python {conventions['python_version']}")
+    if conventions.get("package_manager"):
+        lines.append(f"- Package manager: {conventions['package_manager']}")
+    lines.append("")
 
+    # Commands
+    lines.append("## Commands")
     if test_cmd:
         lines.append(f"- **Test:** `{test_cmd}`")
     else:
-        lines.append("- **Test:** `<!-- add test command -->`")
-
+        lines.append("- **Test:** `<!-- add test command, e.g. pytest -->`")
     if build_cmd:
         lines.append(f"- **Build:** `{build_cmd}`")
-
     if lint_cmd:
         lines.append(f"- **Lint:** `{lint_cmd}`")
     elif "ruff.toml" in linters or ".ruff.toml" in linters:
@@ -126,20 +136,33 @@ def _generate_claude_md(scan_result: dict, conventions: dict) -> str:
         lines.append("- **Lint:** `flake8`")
     elif ".eslintrc" in linters or "eslint.config.js" in linters:
         lines.append("- **Lint:** `eslint .`")
+    if type_check_cmd:
+        lines.append(f"- **Type check:** `{type_check_cmd}`")
+    if conventions.get("pre_commit"):
+        lines.append("- **Pre-commit:** `pre-commit run --all-files`")
+    lines.append("")
 
+    # Architecture
     if key_dirs:
-        lines.extend(["", "## Key Directories"])
+        lines.append("## Architecture")
         for d in key_dirs:
             lines.append(f"- `{d}/`")
+        lines.append("")
 
-    lines.extend([
-        "",
-        "## DO NOT",
-        "- Do not use raw `open()` — use the project's I/O utilities",
-        "- Do not commit .env files or secrets",
-        "- Do not skip tests when fixing bugs",
-        "- Do not use `any` type in TypeScript" if "typescript" in stack else "- Do not hardcode paths",
-    ])
+    # DO NOT rules — tailored to stack
+    lines.append("## DO NOT")
+    lines.append("- Do not commit `.env` files or secrets")
+    lines.append("- Do not skip tests when fixing bugs")
+    if "python" in stack:
+        lines.append("- Do not use bare `except:` — always catch specific exceptions")
+        lines.append("- Do not use `print()` for logging — use the logging module")
+    if "typescript" in stack or "nextjs" in stack or "react" in stack:
+        lines.append("- Do not use `any` type — always specify proper TypeScript types")
+        lines.append("- Do not import from `@/` without checking the tsconfig paths")
+    if "fastapi" in stack or "django" in stack:
+        lines.append("- Do not expose raw database errors to API responses")
+    if conventions.get("naming_conventions", {}).get("python_files") == "snake_case":
+        lines.append("- Do not use camelCase for Python file or variable names — snake_case only")
 
     return "\n".join(lines) + "\n"
 
@@ -233,27 +256,46 @@ def run(input: dict) -> dict:
     rank = 1
 
     # Security actions first (always highest priority)
+    gitignore_seen = False
     for issue in security_issues:
-        if issue.get("type") == "exposed_env":
-            if not scan_result.get("has_gitignore"):
-                security_actions.append({
-                    "rank": rank,
-                    "issue_type": "exposed_env",
-                    "file_to_create": ".gitignore",
-                    "description": f"Add .env to .gitignore — {issue.get('file', '.env')} is unprotected",
-                })
-                actions.append({
-                    "rank": rank,
-                    "tool": "security",
-                    "action": "create",
-                    "file": ".gitignore",
-                    "priority": "high",
-                    "reason": f"{issue.get('file', '.env')} present but .gitignore missing — secrets at risk",
-                    "content": _generate_gitignore(stack),
-                    "expected_sections": [".env"],
-                    "estimated_tokens": 50,
-                })
-                rank += 1
+        if issue.get("type") == "exposed_env" and not gitignore_seen:
+            gitignore_seen = True
+            has_gitignore = scan_result.get("has_gitignore", False)
+            existing_gitignore = scan_result.get("gitignore_content", "")
+            new_gitignore_content = _generate_gitignore(stack)
+
+            if has_gitignore and existing_gitignore:
+                # Merge: keep existing content, append missing env/secret patterns
+                env_section = "# Environment and secrets\n.env\n.env.local\n.env.*\n*.pem\n*.key\n"
+                if ".env" not in existing_gitignore:
+                    merged = existing_gitignore.rstrip("\n") + "\n\n" + env_section
+                    action_verb = "update"
+                    action_reason = f"{issue.get('file', '.env')} not in .gitignore — appending env/secret patterns"
+                else:
+                    continue  # gitignore exists and already has .env covered
+            else:
+                merged = new_gitignore_content
+                action_verb = "create"
+                action_reason = f"{issue.get('file', '.env')} present but .gitignore missing — secrets at risk"
+
+            security_actions.append({
+                "rank": rank,
+                "issue_type": "exposed_env",
+                "file_to_create": ".gitignore",
+                "description": f"Add .env to .gitignore — {issue.get('file', '.env')} is unprotected",
+            })
+            actions.append({
+                "rank": rank,
+                "tool": "security",
+                "action": action_verb,
+                "file": ".gitignore",
+                "priority": "high",
+                "reason": action_reason,
+                "content": merged,
+                "expected_sections": [".env"],
+                "estimated_tokens": len(merged) // 4,
+            })
+            rank += 1
 
         if issue.get("type") == "missing_cursorignore":
             security_actions.append({
@@ -349,37 +391,56 @@ def run(input: dict) -> dict:
 
 
 def run_with_foundry(client, scan_result: dict, research: dict) -> dict:
-    """Run the Planner agent using Azure AI Foundry."""
-    model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
+    """Run the Planner agent using Azure AI Foundry.
 
-    agent = client.agents.create_agent(
-        model=model,
-        name="fix-my-vibe-planner",
-        instructions=PLANNER_INSTRUCTIONS,
-        tools=[],
+    The structured ActionPlan (with generated file content) is built locally — this is the
+    deterministic part that must be correct. Phi-4-reasoning then reviews the plan via the
+    inference API and adds a reasoning trace explaining its priority decisions. This trace
+    is the money-shot for the Best Reasoning Agent demo.
+    """
+    # Build the full ActionPlan using local Python logic
+    result = run({"scan_result": scan_result, "research": research})
+
+    # Ask Phi-4 to reason about the plan — this is pure chain-of-thought, no tools needed
+    plan_summary_for_model = json.dumps({
+        "security_issues": scan_result.get("security_issues", []),
+        "detected_tools": scan_result.get("detected_tools", []),
+        "missing_configs": scan_result.get("missing_configs", {}),
+        "detected_stack": scan_result.get("detected_stack", []),
+        "actions": [
+            {
+                "rank": a["rank"],
+                "tool": a["tool"],
+                "action": a["action"],
+                "file": a["file"],
+                "priority": a["priority"],
+                "reason": a["reason"],
+            }
+            for a in result.get("actions", [])
+        ],
+    }, indent=2)
+
+    reasoning_prompt = (
+        "You are a senior security-conscious developer reviewing an action plan for fixing "
+        "an AI coding tool setup in a developer project.\n\n"
+        f"Plan to review:\n{plan_summary_for_model}\n\n"
+        "Reason step-by-step:\n"
+        "1. Are the security issues correctly prioritised as rank 1? If not, say why.\n"
+        "2. For each detected tool that's missing a config, is the proposed fix correct?\n"
+        "3. Are there any risks in applying these changes (e.g. overwriting a file that "
+        "   was intentionally minimal)?\n"
+        "4. What should the developer do FIRST and why?\n\n"
+        "Write your analysis as 4-6 sentences of clear reasoning. End with: "
+        "VERDICT: approved or needs_revision"
     )
 
-    try:
-        prompt = (
-            "Analyse this scan result and research, then produce an ActionPlan.\n\n"
-            f"scan_result:\n{json.dumps(scan_result, indent=2)}\n\n"
-            f"research:\n{json.dumps(research, indent=2)}"
-        )
-        thread_id = create_thread_and_send(client, prompt)
+    model = os.environ.get("FOUNDRY_MODEL_DEPLOYMENT_NAME", "Phi-4-reasoning")
+    chat = client.inference.get_chat_completions_client()
+    response = chat.complete(
+        model=model,
+        messages=[{"role": "user", "content": reasoning_prompt}],
+    )
+    raw = response.choices[0].message.content
 
-        run = client.agents.runs.create_and_process(
-            thread_id=thread_id,
-            agent_id=agent.id,
-        )
-
-        if run.status != "completed":
-            raise RuntimeError(f"Planner run ended with status: {run.status}")
-
-        result_text, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
-        result = parse_json_response(result_text)
-        if reasoning:
-            result["_reasoning_trace"] = reasoning
-        return result
-
-    finally:
-        client.agents.delete_agent(agent.id)
+    result["_reasoning_trace"] = raw
+    return result

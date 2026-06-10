@@ -24,14 +24,20 @@ STACK_SIGNATURES: dict[str, list[str]] = {
     "python":     ["requirements.txt", "pyproject.toml", "setup.py", "Pipfile", "poetry.lock"],
     "node":       ["package.json", "package-lock.json", "yarn.lock", "pnpm-lock.yaml"],
     "nextjs":     ["next.config.js", "next.config.ts", "next.config.mjs"],
-    "fastapi":    ["main.py"],
     "django":     ["manage.py"],
-    "react":      ["src/App.jsx", "src/App.tsx", "vite.config.ts"],
+    "react":      ["src/App.jsx", "src/App.tsx"],
     "typescript": ["tsconfig.json"],
     "rust":       ["Cargo.toml", "Cargo.lock"],
     "go":         ["go.mod", "go.sum"],
     "docker":     ["Dockerfile", "docker-compose.yml", "docker-compose.yaml"],
     "monorepo":   ["pnpm-workspace.yaml", "lerna.json", "nx.json", "turbo.json"],
+}
+
+# Stack entries that require content inspection (filename alone is too generic)
+CONTENT_STACK_SIGNALS: dict[str, tuple[str, list[str]]] = {
+    "fastapi": ("requirements.txt", ["fastapi", "FastAPI"]),
+    "flask":   ("requirements.txt", ["flask", "Flask"]),
+    "vite":    ("package.json",     ['"vite"', '"@vitejs']),
 }
 
 LINTER_SIGNATURES: dict[str, list[str]] = {
@@ -54,12 +60,15 @@ def scan_directory(project_path: str) -> dict:
     if not path.is_dir():
         return {"error": f"Path is not a directory: {project_path}"}
 
+    # Walk the project tree. We include hidden dirs that are known to hold AI tool
+    # configs (.github, .cursor, .vscode, etc.) and skip only irrelevant ones.
+    _SKIP_DIRS = {".git", "node_modules", "__pycache__", "dist", "build", ".next",
+                  ".pytest_cache", ".mypy_cache", ".ruff_cache", ".tox", "venv", ".venv"}
     all_files: set[str] = set()
     for root, dirs, files in os.walk(path):
-        dirs[:] = [d for d in dirs if not d.startswith(".")
-                   and d not in ("node_modules", "__pycache__", ".git", "dist", "build", ".next")]
+        dirs[:] = [d for d in dirs if d not in _SKIP_DIRS]
         rel_root = Path(root).relative_to(path)
-        if len(rel_root.parts) > 3:
+        if len(rel_root.parts) > 4:
             dirs.clear()
             continue
         for f in files:
@@ -78,6 +87,18 @@ def scan_directory(project_path: str) -> dict:
         if any(s in all_files or (path / s).exists() for s in signatures):
             detected_stack.append(stack)
 
+    # Content-based stack detection for cases where the filename alone is too generic
+    for stack_name, (check_file, keywords) in CONTENT_STACK_SIGNALS.items():
+        if stack_name not in detected_stack:
+            candidate = path / check_file
+            if candidate.exists():
+                try:
+                    content = candidate.read_text(encoding="utf-8", errors="ignore")
+                    if any(kw in content for kw in keywords):
+                        detected_stack.append(stack_name)
+                except Exception:
+                    pass
+
     detected_linters: list[str] = []
     for _stack, sigs in LINTER_SIGNATURES.items():
         detected_linters.extend(s for s in sigs if s in all_files or (path / s).exists())
@@ -94,13 +115,27 @@ def scan_directory(project_path: str) -> dict:
     security_issues: list[dict] = []
     env_files = [f for f in all_files if f == ".env" or f.startswith(".env.") or "/.env" in f]
     for env_file in env_files:
-        if env_file not in gitignore_content:
+        if not _is_gitignored(env_file, gitignore_content):
             security_issues.append({
                 "type": "exposed_env",
                 "file": env_file,
                 "severity": "high",
                 "description": f"{env_file} present but not in .gitignore — secrets may leak to AI context window",
             })
+
+    # Check for private key and certificate files anywhere in the tree
+    sensitive_patterns = (".pem", ".key", ".p12", ".pfx", ".crt", ".cer")
+    sensitive_names = {"id_rsa", "id_dsa", "id_ecdsa", "id_ed25519", "credentials.json"}
+    for f in all_files:
+        fname = Path(f).name
+        if fname in sensitive_names or any(fname.endswith(p) for p in sensitive_patterns):
+            if not _is_gitignored(f, gitignore_content):
+                security_issues.append({
+                    "type": "exposed_credential",
+                    "file": f,
+                    "severity": "critical",
+                    "description": f"{f} looks like a private key or credential file and is not gitignored",
+                })
 
     if "cursor" in detected_tools and ".cursorignore" not in all_files:
         security_issues.append({
@@ -128,9 +163,32 @@ def scan_directory(project_path: str) -> dict:
         "missing_configs": missing_configs,
         "security_issues": security_issues,
         "has_gitignore": has_gitignore,
+        "gitignore_content": gitignore_content,
         "total_files_scanned": len(all_files),
         "subdirectory_count": len(subdirs),
     }
+
+
+def _is_gitignored(filename: str, gitignore_content: str) -> bool:
+    """Check if a file is covered by any pattern in .gitignore content."""
+    name = Path(filename).name
+    for raw_line in gitignore_content.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        # Exact match on full path or filename
+        if line == filename or line == name:
+            return True
+        # Glob: *.ext covers any file with that extension
+        if line.startswith("*.") and name.endswith(line[1:]):
+            return True
+        # Prefix glob: .env.* covers .env.local, .env.production, etc.
+        if line.endswith("*") and (filename.startswith(line[:-1]) or name.startswith(line[:-1])):
+            return True
+        # Directory match: .env inside a dir like secrets/.env
+        if "/" not in line and ("/" + line) in ("/" + filename):
+            return True
+    return False
 
 
 def check_path_tools() -> dict:
@@ -139,10 +197,10 @@ def check_path_tools() -> dict:
         "claude_code": ["claude"],
         "cursor":      ["cursor"],
         "aider":       ["aider"],
-        "copilot":     [],  # no standalone CLI — detected via config files (Layer 1) and VS Code extensions (Layer 3)
+        "copilot":     [],  # no standalone CLI — detected via config files and VS Code extensions
         "windsurf":    ["windsurf"],
-        "cline":       [],
-        "continue":    [],
+        "cline":       [],  # VS Code extension only
+        "continue":    [],  # VS Code extension only
     }
     path_tools: dict[str, str] = {}
     for tool, cmds in cli_names.items():
@@ -187,6 +245,15 @@ def check_vscode_extensions(project_path: str) -> dict:
     return {"vscode_tools": vscode_tools, "extensions_found": recommendations}
 
 
+_AI_CONTEXT_FILES = frozenset({
+    "CLAUDE.md", ".cursorrules", ".clinerules",
+    ".github/copilot-instructions.md", ".copilot",
+    ".windsurfrc", ".windsurf/rules.md",
+    ".aider.conf.yml", "aider.conf.yml",
+    ".continue/config.json", ".continuerc.json",
+})
+
+
 def read_existing_context_file(project_path: str, filename: str) -> dict:
     """Read and audit an existing AI tool context file."""
     filepath = Path(project_path) / filename
@@ -197,6 +264,7 @@ def read_existing_context_file(project_path: str, filename: str) -> dict:
         content = filepath.read_text(encoding="utf-8")
         lines = content.splitlines()
         estimated_tokens = len(content) // 4
+        is_ai_context = filename in _AI_CONTEXT_FILES or filename.endswith(".md")
         return {
             "exists": True,
             "filename": filename,
@@ -206,7 +274,7 @@ def read_existing_context_file(project_path: str, filename: str) -> dict:
             "has_project_overview": any(k in content.lower() for k in ["overview", "project", "about"]),
             "has_commands_section": any(k in content.lower() for k in ["npm", "pip", "make", "run", "test", "build"]),
             "has_prohibitions": "do not" in content.lower() or "don't" in content.lower(),
-            "quality_concerns": _audit_context_file(content, estimated_tokens),
+            "quality_concerns": _audit_context_file(content, estimated_tokens) if is_ai_context else [],
             "content_preview": content[:500],
         }
     except Exception as e:
@@ -233,17 +301,21 @@ def infer_project_conventions(project_path: str) -> dict:
     Deeply infer project conventions from file structure and content.
     Used by the Planner to generate tailored config files.
     """
+    import re as _re
     path = Path(project_path).resolve()
     conventions: dict = {
         "test_command": None,
         "build_command": None,
         "lint_command": None,
+        "type_check_command": None,
         "package_manager": None,
         "python_version": None,
         "formatting": None,
         "import_style": None,
+        "pre_commit": False,
         "naming_conventions": {},
         "key_directories": [],
+        "readme_summary": None,
     }
 
     # Package manager
@@ -254,28 +326,69 @@ def infer_project_conventions(project_path: str) -> dict:
     elif (path / "package-lock.json").exists():
         conventions["package_manager"] = "npm"
 
-    # Python version from pyproject.toml or .python-version
+    # Python version from .python-version
     pyver_file = path / ".python-version"
     if pyver_file.exists():
-        conventions["python_version"] = pyver_file.read_text().strip()
+        try:
+            conventions["python_version"] = pyver_file.read_text().strip()
+        except Exception:
+            pass
 
+    # pyproject.toml — rich source of conventions
     pyproject = path / "pyproject.toml"
     if pyproject.exists():
         try:
             content = pyproject.read_text()
-            # Extract test command
             if "pytest" in content:
                 conventions["test_command"] = "pytest"
-            if "ruff" in content:
+            if "[tool.ruff]" in content or 'ruff' in content:
                 conventions["lint_command"] = "ruff check ."
-                conventions["formatting"] = "ruff"
-            if "black" in content:
-                conventions["formatting"] = "black"
-            # Extract Python version requirement
-            import re
-            m = re.search(r'python_requires\s*=\s*["\']([^"\']+)["\']', content)
+                conventions["formatting"] = "ruff format ."
+            elif "[tool.black]" in content or "black" in content:
+                conventions["formatting"] = "black ."
+            if "[tool.mypy]" in content:
+                conventions["type_check_command"] = "mypy ."
+            elif "[tool.pyright]" in content:
+                conventions["type_check_command"] = "pyright"
+            m = _re.search(r'python_requires\s*=\s*["\']([^"\']+)["\']', content)
             if m:
                 conventions["python_version"] = m.group(1)
+        except Exception:
+            pass
+
+    # Dedicated config files for Python tooling
+    for cfg_file, tool_cmd in [
+        ("pytest.ini", "pytest"),
+        ("setup.cfg", "pytest"),
+        (".flake8", "flake8"),
+        ("mypy.ini", "mypy ."),
+        ("ruff.toml", "ruff check ."),
+        (".ruff.toml", "ruff check ."),
+    ]:
+        if (path / cfg_file).exists():
+            if "pytest" in tool_cmd and not conventions["test_command"]:
+                conventions["test_command"] = "pytest"
+            elif "flake8" in tool_cmd and not conventions["lint_command"]:
+                conventions["lint_command"] = "flake8"
+            elif "ruff" in tool_cmd and not conventions["lint_command"]:
+                conventions["lint_command"] = "ruff check ."
+                if not conventions["formatting"]:
+                    conventions["formatting"] = "ruff format ."
+            elif "mypy" in tool_cmd and not conventions["type_check_command"]:
+                conventions["type_check_command"] = "mypy ."
+
+    # Makefile — parse targets for common commands
+    makefile = path / "Makefile"
+    if makefile.exists():
+        try:
+            mk = makefile.read_text()
+            make_targets = _re.findall(r'^([a-zA-Z][a-zA-Z0-9_-]*):', mk, _re.MULTILINE)
+            if not conventions["test_command"] and "test" in make_targets:
+                conventions["test_command"] = "make test"
+            if not conventions["build_command"] and "build" in make_targets:
+                conventions["build_command"] = "make build"
+            if not conventions["lint_command"] and "lint" in make_targets:
+                conventions["lint_command"] = "make lint"
         except Exception:
             pass
 
@@ -285,27 +398,59 @@ def infer_project_conventions(project_path: str) -> dict:
         try:
             pkg = json.loads(pkg_json.read_text())
             scripts = pkg.get("scripts", {})
-            if "test" in scripts:
-                pm = conventions["package_manager"] or "npm"
+            pm = conventions["package_manager"] or "npm"
+            if not conventions["test_command"] and "test" in scripts:
                 conventions["test_command"] = f"{pm} test"
-            if "build" in scripts:
-                pm = conventions["package_manager"] or "npm"
+            if not conventions["build_command"] and "build" in scripts:
                 conventions["build_command"] = f"{pm} run build"
-            if "lint" in scripts:
-                pm = conventions["package_manager"] or "npm"
+            if not conventions["lint_command"] and "lint" in scripts:
                 conventions["lint_command"] = f"{pm} run lint"
+            if not conventions["type_check_command"] and "typecheck" in scripts:
+                conventions["type_check_command"] = f"{pm} run typecheck"
         except Exception:
             pass
 
+    # Pre-commit hooks
+    if (path / ".pre-commit-config.yaml").exists():
+        conventions["pre_commit"] = True
+
     # Key directories
-    key_dirs = ["src", "tests", "test", "docs", "scripts", "api", "lib", "components", "pages", "app"]
+    key_dirs = ["src", "tests", "test", "docs", "scripts", "api", "lib",
+                "components", "pages", "app", "pkg", "cmd", "internal"]
     conventions["key_directories"] = [d for d in key_dirs if (path / d).is_dir()]
 
-    # Naming conventions from existing Python files
-    py_files = list(path.glob("**/*.py"))[:20]
-    snake_count = sum(1 for f in py_files if "_" in f.stem)
-    if snake_count > len(py_files) * 0.7:
-        conventions["naming_conventions"]["python_files"] = "snake_case"
+    # Naming conventions — check Python file stems
+    py_files = list(path.glob("**/*.py"))[:30]
+    if py_files:
+        snake_count = sum(1 for f in py_files if "_" in f.stem)
+        if snake_count > len(py_files) * 0.6:
+            conventions["naming_conventions"]["python_files"] = "snake_case"
+
+    # README summary — first non-empty paragraph
+    for readme_name in ("README.md", "README.rst", "README.txt", "README"):
+        readme = path / readme_name
+        if readme.exists():
+            try:
+                lines = readme.read_text(encoding="utf-8", errors="ignore").splitlines()
+                # Skip heading lines, grab first substantive paragraph
+                para_lines = []
+                for line in lines:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#") or stripped.startswith("=") or stripped.startswith("-"):
+                        if para_lines:
+                            break
+                        continue
+                    # Strip markdown badges and HTML
+                    if stripped.startswith("[![") or stripped.startswith("<"):
+                        continue
+                    para_lines.append(stripped)
+                    if len(" ".join(para_lines)) > 300:
+                        break
+                if para_lines:
+                    conventions["readme_summary"] = " ".join(para_lines)[:400]
+            except Exception:
+                pass
+            break
 
     return conventions
 

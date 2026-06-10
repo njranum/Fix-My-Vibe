@@ -95,7 +95,7 @@ def _run_scan_only(project_path: str, verbose: bool, output_json: bool, use_loca
     if not use_local and os.environ.get("FOUNDRY_PROJECT_ENDPOINT"):
         from src.foundry_utils import get_client
         from src.agents.scanner import run_with_foundry
-        print("  Using Azure Foundry (set --local to force local mode)\n")
+        print("  Using Azure Foundry (pass --local to force local mode)\n")
         client = get_client()
         result = run_with_foundry(client, project_path)
     else:
@@ -115,7 +115,13 @@ def _run_scan_only(project_path: str, verbose: bool, output_json: bool, use_loca
     print("────────────────────────────────────────────────────────")
 
     if verbose:
-        print("\nFull scan result:")
+        reasoning = result.pop("_reasoning_trace", None)
+        if reasoning:
+            print("\n── Phi-4 Reasoning Trace ──────────────────────────────────")
+            for line in reasoning.splitlines():
+                print(f"  {line}")
+            print("────────────────────────────────────────────────────────────")
+        print("\nFull scan result (JSON):")
         print(json.dumps(result, indent=2))
 
 
