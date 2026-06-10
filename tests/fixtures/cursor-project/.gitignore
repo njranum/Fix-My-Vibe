@@ -3,10 +3,3 @@ __pycache__/
 .venv/
 venv/
 *.egg-info/
-
-# Environment and secrets
-.env
-.env.local
-.env.*
-*.pem
-*.key
