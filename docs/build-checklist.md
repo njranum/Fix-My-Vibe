@@ -39,29 +39,56 @@ _Microsoft AI Skills Fest, Agents League — Deadline June 14, 2026_
       does not support function calling. All tool execution was in Python, model only
       wrote summary paragraphs. This is the core issue addressed in Day 3.
 
-## Day 3 — Genuine Agentic Rewrite 🔲 (current)
+## Day 3 — Genuine Agentic Rewrite ✅
 
 Model: switched from Phi-4-reasoning → o4-mini (supports function calling via Agents API)
 
-- [ ] `src/agents/scanner.py` — `run_with_foundry()` rewritten: o4-mini calls tools agentically
-- [ ] `src/agents/researcher.py` — `run_with_foundry()` rewritten: model chooses search queries
-- [ ] `src/agents/planner.py` — `run_with_foundry()` rewritten: model generates file content
-- [ ] `src/agents/executor.py` — `run_with_foundry()` rewritten: model calls write_file
-- [ ] `src/agents/verifier.py` — `run_with_foundry()` rewritten: model calls verify_file
-- [ ] End-to-end Foundry pipeline tested on all 3 fixtures with o4-mini
-- [ ] Reasoning traces show model's tool-use decisions, not post-hoc summaries
-- [ ] Planner-generated CLAUDE.md is project-specific (not template output)
+- [x] `src/agents/scanner.py` — `run_with_foundry()` rewritten: o4-mini calls tools agentically
+- [x] `src/agents/researcher.py` — `run_with_foundry()` rewritten: model chooses search queries
+- [x] `src/agents/planner.py` — `run_with_foundry()` rewritten: model generates file content
+- [x] `src/agents/executor.py` — `run_with_foundry()` rewritten: model calls write_file
+- [x] `src/agents/verifier.py` — `run_with_foundry()` rewritten: model calls verify_file
+- [x] End-to-end Foundry pipeline tested on bare-project with o4-mini — 4 files written
+- [x] Planner-generated CLAUDE.md is project-specific (references FastAPI, real conventions)
+- [ ] End-to-end Foundry pipeline tested on cursor-project and node-typescript
+- [ ] Reasoning traces show model's tool-use decisions clearly in --verbose mode
 
 ## Day 4 — Polish + Submission 🔲
 
-- [ ] `docs/fix-my-vibe-paper.md` complete and accurate
-- [ ] README.md complete with install + demo instructions
+- [ ] `pyproject.toml` — entry point so `pip install -e .` creates `fix-my-vibe` command
+- [ ] `infra/main.bicep` — complete azd template: AI Services resource + o4-mini deployment
+- [ ] `azure.yaml` — verify azd config points to completed bicep
+- [ ] README.md — install + one-time setup (`azd up`) + demo instructions
 - [ ] Demo video recorded (3-5 min, shows `--verbose` with real tool-use reasoning)
+- [ ] `docs/fix-my-vibe-paper.md` complete and accurate
 - [ ] Security review: path traversal protection tested
 - [ ] Confirmation gate tested (reject → no files written)
 - [ ] Backup/restore tested (overwrite scenario)
 - [ ] GitHub repo public with clear submission notes
+- [ ] Registered at aka.ms/AgentsLeague/AISF
 - [ ] Submission at https://github.com/microsoft/agentsleague/issues
+
+## Distribution Model
+
+Fix My Vibe is a developer CLI tool — users bring their own Azure credentials. Setup is a
+one-time operation per machine:
+
+```bash
+# 1. Clone and install
+git clone https://github.com/njranum/Fix-My-Vibe
+cd Fix-My-Vibe
+pip install -e .
+
+# 2. Provision Azure infrastructure (one time)
+az login
+azd up   # provisions resource group, AI Services, o4-mini deployment
+
+# 3. Use from any project
+fix-my-vibe /path/to/my-project --verbose
+```
+
+`azd up` reads `infra/main.bicep` and creates all required Azure resources automatically.
+Users need an Azure subscription; no manual portal configuration required.
 
 ## Key Technical Constraints
 

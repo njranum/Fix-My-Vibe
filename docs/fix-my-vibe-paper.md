@@ -88,8 +88,8 @@ All Foundry agents follow the same pattern:
 - Model reasons over results, produces structured JSON output
 - Agent deleted after run
 
-Local mode (`--local`) available for development: runs the same pipeline using Python
-logic and templates, no Azure required, completes in ~3 seconds.
+A `--local` flag exists for development and testing: same pipeline, Python fallbacks,
+no Azure required. Not intended for end users.
 
 ---
 
@@ -146,22 +146,41 @@ not narrated after the fact.
 
 ---
 
+## Installation and Setup
+
+Fix My Vibe is a developer CLI tool — users provision their own Azure infrastructure once,
+then run against any local project. No code is sent to a third-party service; the Azure
+resources run in the user's own subscription.
+
+```bash
+# 1. Install
+git clone https://github.com/njranum/Fix-My-Vibe
+pip install -e .
+
+# 2. Provision Azure resources (one-time, ~2 minutes)
+az login
+azd up   # creates resource group, AI Services, deploys o4-mini
+
+# 3. Run against any project
+fix-my-vibe ./my-project --verbose
+```
+
+`azd up` reads `infra/main.bicep` and provisions everything automatically — no manual
+portal configuration. Required: Azure subscription with AI Services quota for o4-mini.
+
 ## Demo
 
 ```bash
-# Install
-pip install -e .
+# Standard run — shows plan, asks for confirmation before writing
+fix-my-vibe ./my-project
 
-# Run against a project (Foundry mode — genuinely agentic)
+# Show agent reasoning traces
 fix-my-vibe ./my-project --verbose
 
-# Run in local mode (no Azure — Python pipeline, instant)
-fix-my-vibe ./my-project --local --verbose
-
-# Scan only (no file writes)
+# Scan only — no planning or file writes
 fix-my-vibe ./my-project --scan-only
 
-# Non-interactive (CI mode)
+# Non-interactive (CI/scripting)
 fix-my-vibe ./my-project --yes
 ```
 
