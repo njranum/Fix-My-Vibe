@@ -18,6 +18,7 @@ from src.tools.fs_tools import (
     read_existing_context_file,
     infer_project_conventions,
 )
+from src.tools.security_scan import scan_security_patterns
 from src.foundry_utils import (
     run_agent_with_tools,
     get_last_assistant_message_with_reasoning,
@@ -38,7 +39,9 @@ Process (follow exactly):
 3. Call check_vscode_extensions(project_path) — VS Code extension detection, layer 3
 4. For each existing context file found (e.g. CLAUDE.md, .cursorrules), call read_existing_context_file()
 5. Call infer_project_conventions(project_path) — detect build/test commands, naming conventions
-6. Synthesise all results into a single JSON diagnosis
+6. Call scan_security_patterns(project_path) — code-level scan for patterns AI assistants
+   commonly introduce (hardcoded secrets, eval(), SQL injection, verify=False, debug=True)
+7. Synthesise all results into a single JSON diagnosis
 
 Your output MUST be valid JSON matching this exact structure:
 {
@@ -48,6 +51,10 @@ Your output MUST be valid JSON matching this exact structure:
   "is_monorepo": false,
   "security_issues": [
     {"type": "exposed_env", "file": ".env", "severity": "high", "description": "..."}
+  ],
+  "code_security_findings": [
+    {"type": "hardcoded_secret", "file": "src/app.py", "line": 12, "severity": "high",
+     "description": "...", "snippet": "...", "recommendation": "..."}
   ],
   "missing_configs": {"cursor": ".cursorrules"},
   "existing_configs": {
@@ -67,7 +74,10 @@ Your output MUST be valid JSON matching this exact structure:
 }
 
 Rules:
-- "priority" is "high" if there are security issues or a detected tool has no config file at all
+- "priority" is "high" if there are security issues, code_security_findings with high severity,
+  or a detected tool has no config file at all
+- Copy code_security_findings verbatim from the scan_security_patterns tool output — never
+  invent, drop, or rewrite findings
 - "priority" is "medium" if configs exist but have quality concerns
 - "priority" is "low" if everything looks well-configured
 - If no tools detected via any layer, set detected_tools to [] and note in diagnosis_summary
@@ -142,6 +152,20 @@ def _get_tool_definitions() -> list[dict]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "scan_security_patterns",
+                "description": "Scan source code for security patterns AI assistants commonly introduce: hardcoded secrets, eval/exec, SQL string interpolation, verify=False, debug=True, shell=True",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "project_path": {"type": "string", "description": "Absolute path to the project directory"}
+                    },
+                    "required": ["project_path"],
+                },
+            },
+        },
     ]
 
 
@@ -154,6 +178,7 @@ def _make_tool_handlers(project_path: str) -> dict:
             args["project_path"], args["filename"]
         ),
         "infer_project_conventions": lambda args: infer_project_conventions(args["project_path"]),
+        "scan_security_patterns": lambda args: scan_security_patterns(args["project_path"]),
     }
 
 
@@ -167,6 +192,8 @@ def run(input: dict) -> dict:
 
     detection = run_full_detection(project_path)
     conventions = infer_project_conventions(project_path)
+    code_scan = scan_security_patterns(project_path)
+    code_findings = code_scan.get("findings", [])
 
     existing_configs = {}
     for tool, files in detection.get("tool_files_found", {}).items():
@@ -177,6 +204,8 @@ def run(input: dict) -> dict:
 
     priority = "low"
     if detection.get("security_issues"):
+        priority = "high"
+    elif any(f.get("severity") == "high" for f in code_findings):
         priority = "high"
     elif detection.get("missing_configs"):
         priority = "high"
@@ -202,6 +231,12 @@ def run(input: dict) -> dict:
         summary_parts.append(f"Missing configs: {', '.join(f'{t} needs {f}' for t, f in missing.items())}.")
     if sec:
         summary_parts.append(f"{len(sec)} security issue(s) found.")
+    if code_findings:
+        high = sum(1 for f in code_findings if f.get("severity") == "high")
+        summary_parts.append(
+            f"{len(code_findings)} code-level security finding(s) ({high} high severity) — "
+            "patterns AI assistants commonly introduce."
+        )
 
     return {
         "project_path": detection.get("project_path", project_path),
@@ -210,6 +245,7 @@ def run(input: dict) -> dict:
         "detected_stack": stack,
         "is_monorepo": detection.get("is_monorepo", False),
         "security_issues": sec,
+        "code_security_findings": code_findings,
         "missing_configs": missing,
         "existing_configs": existing_configs,
         "has_gitignore": detection.get("has_gitignore", False),
@@ -240,6 +276,7 @@ def run_with_foundry(client, project_path: str) -> dict:
         f"Scan the project at {abs_path}. "
         "Use the available tools to: detect AI coding tools (config files, PATH, VS Code extensions), "
         "identify the tech stack, find security issues (exposed .env, missing .cursorignore), "
+        "scan source code for security patterns AI assistants commonly introduce, "
         "audit any existing AI config files for quality, and infer project conventions. "
         "Return a complete ScanResult JSON."
     )
