@@ -636,7 +636,9 @@ def run_with_foundry(client, scan_result: dict, research: dict) -> dict:
         f"{json.dumps({'scan_result': scan_result, 'research': research, 'mcp_recommendations': mcp_recommendations}, indent=2)}"
     )
     thread_id = create_thread_and_send(client, task_message)
-    run_agent_with_tools(client, agent.id, thread_id, {})
+    # No tools, but generating full content for 5-6 files in one JSON takes
+    # well over 120 polling iterations (observed in_progress at the cap).
+    run_agent_with_tools(client, agent.id, thread_id, {}, max_iterations=400)
     raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
     result = parse_json_response(raw)
     result["_reasoning_trace"] = reasoning
@@ -648,10 +650,11 @@ def run_with_foundry(client, scan_result: dict, research: dict) -> dict:
 def _ensure_security_actions(plan: dict, scan_result: dict) -> None:
     """Deterministic backstop: the model plans, Python guarantees the floor.
 
-    o4-mini occasionally drops security actions as its instruction load grows
-    (observed: a run with 7 findings and an exposed .env produced neither
-    SECURITY.md nor .gitignore). Security actions are non-negotiable, so if
-    the parsed plan is missing them, inject the locally-generated versions.
+    o4-mini occasionally drops actions as its instruction load grows (observed
+    across runs: one dropped SECURITY.md + .gitignore despite 7 findings and an
+    exposed .env; another dropped PROMPTS.md). Security actions are
+    non-negotiable and PROMPTS.md is a headline output, so if the parsed plan
+    is missing them, inject the locally-generated versions.
     """
     actions = plan.setdefault("actions", [])
     planned_files = {a.get("file") for a in actions}
@@ -682,12 +685,31 @@ def _ensure_security_actions(plan: dict, scan_result: dict) -> None:
             "estimated_tokens": len(content) // 4,
         })
 
-    if injected:
-        plan["actions"] = injected + actions
+    appended: list[dict] = []
+    if (
+        scan_result.get("detected_tools")
+        and not scan_result.get("has_prompts_md")
+        and "PROMPTS.md" not in planned_files
+    ):
+        content = _generate_prompts_md(scan_result, scan_result.get("conventions", {}))
+        appended.append({
+            "tool": "workflow",
+            "action": "create",
+            "file": "PROMPTS.md",
+            "priority": "medium",
+            "reason": "AI tools in use but no prompt library — "
+                      "(restored by deterministic backstop)",
+            "content": content,
+            "expected_sections": ["How to use", "Everyday development", "Code quality"],
+            "estimated_tokens": len(content) // 4,
+        })
+
+    if injected or appended:
+        plan["actions"] = injected + actions + appended
         for i, action in enumerate(plan["actions"], start=1):
             action["rank"] = i
         plan["total_actions"] = len(plan["actions"])
         plan["plan_summary"] = (
             plan.get("plan_summary", "")
-            + f" [{len(injected)} security action(s) restored by deterministic backstop.]"
+            + f" [{len(injected) + len(appended)} action(s) restored by deterministic backstop.]"
         ).strip()

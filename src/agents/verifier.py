@@ -196,7 +196,11 @@ def run_with_foundry(client, project_path: str, execution_result: dict, action_p
         f"Files to verify:\n{json.dumps(verification_tasks, indent=2)}"
     )
     thread_id = create_thread_and_send(client, task_message)
-    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers(abs_path))
+    # Two tool round-trips per file plus polling — default 120 is too tight
+    # for plans with 5-6 files (same failure mode as the executor).
+    run_agent_with_tools(
+        client, agent.id, thread_id, _make_tool_handlers(abs_path), max_iterations=400
+    )
     raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
     result = parse_json_response(raw)
     result["_reasoning_trace"] = reasoning

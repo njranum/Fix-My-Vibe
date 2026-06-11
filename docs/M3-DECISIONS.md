@@ -181,3 +181,33 @@ for any external stat.
   vector store `vs_qXyitIj7TGKhtmSjodZj2yMw` provisioned, Researcher wired
   with file_search + source-choice instructions, Tavily fallback when env var
   absent. All-up --verbose validation run in progress.
+- **2026-06-11** — All-up validation run #1 results:
+  - ✅ KB retrieval is the demo moment: Researcher cited KB docs inline
+    (`【4:2†fastapi-python.md】`), mapped every scan finding to OWASP, and
+    emitted knowledge_sources_used with per-source justification
+  - ✅ Planner produced ALL 6 actions (SECURITY.md format perfect, CLAUDE.md
+    with KB-informed DO NOTs + verbatim MCP commands, PROMPTS.md present)
+  - ❌ Executor hit the silent `max_iterations=120` polling cap mid-plan:
+    5 of 6 files written, no final JSON → "0 file(s) written" reported,
+    Verifier saw nothing. Root cause of the earlier "model under-reported"
+    symptom too. Fixes: (a) write_file handler keeps a ground-truth ledger and
+    executed/errors/summary are built from it, never from the model's
+    self-report; (b) executor + verifier polling budget raised to 400;
+    (c) run_agent_with_tools now warns loudly when the cap is hit
+  - Backstop extended to PROMPTS.md (planner had dropped it in the previous
+    run — stochastic across runs). Validation run #2 in progress.
+- **2026-06-11** — Run #2 died on `rate_limit_exceeded` (o4-mini deployment,
+  too many back-to-back pipeline runs). Demo-day failure mode → added retry
+  with backoff to run_agent_with_tools (new run on the same thread, 30/60/90s,
+  raises after 3 attempts). Local pipeline regression after executor ledger
+  change: ✅ 4/4. Run #3 in progress.
+  **Demo-day note: space pipeline runs a few minutes apart, or request a
+  higher TPM quota for the o4-mini deployment before recording.**
+- **2026-06-11** — Validation run #3: ✅ all 6 files written AND correctly
+  reported (ledger), Verifier 4/6 passed with the 2 "failures" being
+  qualitative suggestions surfaced as recommendations (good demo content,
+  left as-is). The new cap warning caught the Planner still in_progress at
+  120 iterations (it generates 6 files of content in one JSON) — polling
+  budget raised to 400 across all five agents. **M3 build scope complete.**
+  Remaining: cross-fixture Foundry pass, README, demo video, registration,
+  submission.

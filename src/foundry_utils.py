@@ -34,11 +34,25 @@ def run_agent_with_tools(
     thread_id: str,
     tool_handlers: dict[str, Callable],
     max_iterations: int = 120,
+    max_retries: int = 3,
 ) -> str:
     """
     Run a Foundry agent, handling function tool calls in a polling loop.
+    Rate-limited runs are retried with backoff (a new run on the same thread).
     Returns the final run status.
     """
+    for attempt in range(max_retries + 1):
+        status = _run_once(client, agent_id, thread_id, tool_handlers, max_iterations)
+        if status != "rate_limited":
+            return status
+        wait = 30 * (attempt + 1)
+        print(f"  ⚠ Foundry rate limit hit — retrying in {wait}s "
+              f"(attempt {attempt + 1}/{max_retries})")
+        time.sleep(wait)
+    raise RuntimeError("Foundry run failed: rate limit persisted across retries")
+
+
+def _run_once(client, agent_id, thread_id, tool_handlers, max_iterations) -> str:
     run = client.agents.runs.create(thread_id=thread_id, agent_id=agent_id)
     iterations = 0
 
@@ -85,8 +99,20 @@ def run_agent_with_tools(
             run = client.agents.runs.get(thread_id=thread_id, run_id=run.id)
 
     if hasattr(run, "last_error") and run.last_error:
+        error_code = (
+            run.last_error.get("code") if isinstance(run.last_error, dict)
+            else getattr(run.last_error, "code", None)
+        )
+        if str(error_code) == "rate_limit_exceeded":
+            return "rate_limited"  # caller retries with backoff
         log.error("Run failed: %s", run.last_error)
         raise RuntimeError(f"Foundry run failed: {run.last_error}")
+    if iterations >= max_iterations:
+        # Loop exhausted while the run was still going — surface it loudly,
+        # otherwise the caller sees an empty final message and no clue why.
+        log.error("Run %s still %s after %d iterations — giving up", run.id, run.status, iterations)
+        print(f"  ⚠ Foundry run did not finish within {max_iterations} polling iterations "
+              f"(status: {run.status}) — results may be incomplete")
     return run.status
 
 

@@ -276,7 +276,7 @@ def run_with_foundry(client, scan_result: dict) -> dict:
         f"Scan result:\n{json.dumps(scan_result, indent=2)}"
     )
     thread_id = create_thread_and_send(client, task_message)
-    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers())
+    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers(), max_iterations=400)
     raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
     result = parse_json_response(raw)
     result["_reasoning_trace"] = reasoning

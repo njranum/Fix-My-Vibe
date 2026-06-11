@@ -74,14 +74,31 @@ def _get_tool_definitions() -> list[dict]:
     ]
 
 
-def _make_tool_handlers(project_path: str) -> dict:
-    return {
-        "write_file": lambda args: write_file(
+def _make_tool_handlers(project_path: str, write_log: list[dict] | None = None) -> dict:
+    """write_log, when provided, records every actual write — ground truth for
+    the execution result, independent of what the model reports afterwards."""
+    def _handle_write(args: dict) -> dict:
+        result = write_file(
             project_path,  # always use the pre-validated path, not what the model passes
             args["relative_path"],
             args["content"],
         )
-    }
+        if write_log is not None:
+            if "error" in result:
+                write_log.append({"file": args["relative_path"], "error": result["error"]})
+                print(f"  ✗ ERROR writing {args['relative_path']}: {result['error']}")
+            else:
+                write_log.append({
+                    "file": args["relative_path"],
+                    "status": "written",
+                    "backed_up": result.get("backed_up", False),
+                    "size_bytes": result.get("size_bytes", 0),
+                })
+                backup_note = " (backup created)" if result.get("backed_up") else ""
+                print(f"  ✓ Written: {args['relative_path']}{backup_note}")
+        return result
+
+    return {"write_file": _handle_write}
 
 
 def _display_plan(action_plan: dict) -> None:
@@ -267,10 +284,31 @@ def run_with_foundry(client, project_path: str, action_plan: dict, confirmed_ran
         "Return an ExecutionResult JSON.\n\n"
         f"Confirmed actions:\n{json.dumps(confirmed_actions, indent=2)}"
     )
+    write_log: list[dict] = []
     thread_id = create_thread_and_send(client, task_message)
-    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers(abs_path))
+    # Higher iteration budget: one write_file round-trip per action plus polling
+    # adds up — the default 120 was observed running out mid-plan (6 actions).
+    run_agent_with_tools(
+        client, agent.id, thread_id,
+        _make_tool_handlers(abs_path, write_log),
+        max_iterations=400,
+    )
     raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
     result = parse_json_response(raw)
     result["_reasoning_trace"] = reasoning
     client.agents.delete_agent(agent.id)
+
+    # Ground truth override: executed/errors come from the write_file ledger,
+    # not the model's self-report (observed: model wrote 5 files, reported 0).
+    rank_by_file = {a.get("file"): a.get("rank") for a in confirmed_actions}
+    executed = [
+        {**e, "rank": rank_by_file.get(e["file"])}
+        for e in write_log if e.get("status") == "written"
+    ]
+    errors = [e for e in write_log if "error" in e]
+    backed_up = sum(1 for e in executed if e.get("backed_up"))
+    result["executed"] = executed
+    result["errors"] = errors
+    result.setdefault("skipped", [])
+    result["summary"] = f"Wrote {len(executed)} file(s). {backed_up} backed up. {len(errors)} error(s)."
     return result
