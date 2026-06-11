@@ -63,12 +63,29 @@ logger = logging.getLogger(__name__)
 MAX_CONTENT_CHARS = 200_000  # ~50k tokens; protects against huge pages
 
 
+# UI words that appear as standalone lines on modern doc sites (icons, buttons, nav labels).
+# Exact-match only — we don't want to strip these words from mid-sentence prose.
+_UI_NOISE_LINES = frozenset({
+    "link", "menu", "expand", "collapse", "search", "copy", "copied",
+    "document", "external link", "skip to main content", "skip to content",
+    "table of contents", "on this page", "in this article",
+    "edit this page", "edit page", "view source", "print",
+    "next", "previous", "back to top",
+    "light", "dark", "auto",  # theme toggles
+})
+
+
 class _HTMLStripper(HTMLParser):
     """Minimal HTML-to-text converter using stdlib only."""
-    # "head" has a proper close tag and covers all meta/link/style in the doc head.
+    # Non-void block-level and UI tags whose text content is navigation/chrome, not prose.
     # Avoid void elements (link, meta, br, etc.) — they never get endtag events,
     # so including them would permanently set _skip_depth > 0 and eat all content.
-    _SKIP_TAGS = {"script", "style", "nav", "head", "footer"}
+    _SKIP_TAGS = {
+        "script", "style", "nav", "head", "footer",
+        "button", "aside", "header",
+        "svg", "figure", "figcaption",
+        "noscript", "template", "iframe",
+    }
 
     def __init__(self):
         super().__init__()
@@ -89,9 +106,31 @@ class _HTMLStripper(HTMLParser):
 
     def get_text(self) -> str:
         text = "\n".join(self._parts)
-        text = re.sub(r"\n{3,}", "\n\n", text)
-        text = re.sub(r"[ \t]{2,}", " ", text)
-        return text.strip()
+        return _clean_text(text)
+
+
+def _clean_text(text: str) -> str:
+    """Remove navigation noise and normalise whitespace from stripped HTML."""
+    # Collapse runs of spaces/tabs on each line first
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    lines = text.splitlines()
+    cleaned = []
+    for line in lines:
+        stripped = line.strip()
+        # Drop blank lines and single-character lines (stray bullets, icons)
+        if len(stripped) < 2:
+            continue
+        # Drop standalone UI labels that docs sites render as icon+text
+        if stripped.lower() in _UI_NOISE_LINES:
+            continue
+        cleaned.append(stripped)
+    # Collapse 2+ consecutive blank lines (now represented as empty strings) — not needed
+    # since we already dropped blanks, but re-join with single newlines and add paragraph
+    # breaks where original had multiple blank lines.
+    result = "\n".join(cleaned)
+    # Restore paragraph spacing where there were genuine section breaks
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result.strip()
 
 
 def strip_html(content: str) -> str:
@@ -107,7 +146,7 @@ def strip_html(content: str) -> str:
         parser.feed(content)
         return parser.get_text()
     except Exception:
-        return content
+        return _clean_text(content)
 
 
 @dataclass
