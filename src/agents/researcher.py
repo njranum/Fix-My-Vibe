@@ -21,16 +21,28 @@ from src.foundry_utils import (
 
 
 RESEARCHER_INSTRUCTIONS = """
-You are the Researcher agent for Fix My Vibe. You use web search to find current best practices
-for AI coding tool configuration.
+You are the Researcher agent for Fix My Vibe. You gather current best practices
+for AI coding tool configuration and security guidance for the detected stack.
 
-You will be given a JSON scan result with detected_tools and detected_stack.
+You will be given a JSON scan result with detected_tools, detected_stack, and possibly
+code_security_findings.
 
-For each detected tool, search for:
+You may have TWO knowledge sources — choose deliberately per question:
+- file_search (curated knowledge base): authoritative, OWASP-mapped reference on security
+  patterns AI assistants introduce, per stack, plus AI tool config hygiene. PREFER this for
+  anything security-related: explaining scan findings, security_notes, what to exclude from
+  AI context files.
+- search_web: live web search. Use for current tool documentation, config file formats,
+  and community practices that change over time.
+For every query you make, know WHY that source: curated = trusted and stable; web = current.
+
+For each detected tool, gather:
 1. The official documentation for its context/config file format
 2. Current community best practices for that stack + tool combination
 3. Any known security gotchas (e.g. what NOT to include in the context file)
 4. Recommended sections for the config file given the detected stack
+If the scan found code_security_findings, also query the knowledge base for the stack-specific
+guidance on those finding types so the Planner can ground SECURITY.md recommendations.
 
 Output a JSON object with this structure:
 {
@@ -53,7 +65,12 @@ Output a JSON object with this structure:
     }
   },
   "stack_context": "Brief summary of the stack and how it affects config file content",
-  "search_summary": "What searches were performed and key findings"
+  "security_guidance": ["Stack-specific guidance retrieved for any scan findings, with the pattern name and fix"],
+  "search_summary": "What searches were performed and key findings",
+  "knowledge_sources_used": [
+    {"source": "knowledge_base", "for": "FastAPI security patterns", "why": "curated, OWASP-mapped"},
+    {"source": "web", "for": "current CLAUDE.md format docs", "why": "needs to be current"}
+  ]
 }
 
 Return ONLY the JSON — no markdown fences, no preamble.
@@ -225,21 +242,41 @@ def run_with_foundry(client, scan_result: dict) -> dict:
     o4-mini decides what to search for and how many queries to run based on
     the scan result. The model chooses queries — Python only executes them.
     """
+    # Attach the curated security KB (file_search) when provisioned — the model
+    # then chooses between curated knowledge and live web per query.
+    # Setup: scripts/setup_kb.py writes FOUNDRY_KB_VECTOR_STORE_ID to .env.
+    tools = _get_tool_definitions()
+    tool_resources = None
+    kb_vector_store_id = os.environ.get("FOUNDRY_KB_VECTOR_STORE_ID")
+    if kb_vector_store_id:
+        from azure.ai.agents.models import FileSearchTool
+        file_search = FileSearchTool(vector_store_ids=[kb_vector_store_id])
+        tools = file_search.definitions + tools
+        tool_resources = file_search.resources
+
     agent = client.agents.create_agent(
         model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
         name="fix-my-vibe-researcher",
         instructions=RESEARCHER_INSTRUCTIONS,
-        tools=_get_tool_definitions(),
+        tools=tools,
+        tool_resources=tool_resources,
+    )
+    source_hint = (
+        "You have BOTH the curated security knowledge base (file_search) and web search — "
+        "prefer the knowledge base for security topics, the web for current tool docs. "
+        if kb_vector_store_id
+        else "Only web search is available in this run. "
     )
     task_message = (
         "Research current best practices for the AI coding tools and stack detected in this project. "
-        "Use search_web to find official documentation, community best practices, and security guidance. "
-        "Choose your own queries based on what was detected — search for each tool combined with the stack. "
-        "Return a structured JSON research result.\n\n"
+        + source_hint +
+        "Choose your own queries based on what was detected — cover each tool combined with the stack, "
+        "and any code_security_findings types. "
+        "Return a structured JSON research result including knowledge_sources_used.\n\n"
         f"Scan result:\n{json.dumps(scan_result, indent=2)}"
     )
     thread_id = create_thread_and_send(client, task_message)
-    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers())
+    run_agent_with_tools(client, agent.id, thread_id, _make_tool_handlers(), max_iterations=400)
     raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
     result = parse_json_response(raw)
     result["_reasoning_trace"] = reasoning
