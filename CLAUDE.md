@@ -132,6 +132,7 @@ fix-my-vibe/
 - Convention inference logic (how the Planner infers project conventions from file structure) was flagged as superficial in reviewer feedback — needs deeper implementation
 - Token-count reduction metric (formerly claimed 340k → 140k) was unsupported — do not use until benchmarked on real fixture projects
 - Foundry integration claims must be backed by actual SDK calls in code, not prose descriptions
+- **Azure AI Search: `threat_categories` and `stack_applicable_to` not filterable** — these fields were created without `filterable=True` in the index schema, so OData filter expressions (`$filter`) fail at query time. Worked around by folding stack/threat hints into the search query text. To fix properly: add `filterable=True` to those `SimpleField` definitions in `ingest_security_kb.py`, delete and recreate the index, then re-run ingestion.
 
 ---
 
