@@ -211,3 +211,13 @@ for any external stat.
   budget raised to 400 across all five agents. **M3 build scope complete.**
   Remaining: cross-fixture Foundry pass, README, demo video, registration,
   submission.
+- **2026-06-11** — Cross-fixture Foundry pass:
+  - cursor-project: ✅ 5/5 verified; backup-before-overwrite visibly worked
+    (.cursorrules.bak, .gitignore.bak) when updating existing configs
+  - bare-project: ✅ 5 files written and reported, verifier 3/5 (qualitative)
+  - node-typescript: ✅ 5/5 verified; stack adaptation confirmed — PROMPTS.md
+    got Vite/TS-specific prompts (references the fixture's actual
+    vite.config.ts), .gitignore updated with backup. Note: planner chose
+    .copilotignore over .github/copilot-instructions.md for the copilot fix —
+    model judgment variance, sane output, verifier passed; not blocking.
+  **Cross-fixture Foundry pass complete — all 4 fixtures green. M3 done.**
