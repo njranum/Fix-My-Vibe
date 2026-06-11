@@ -78,6 +78,25 @@ verbatim (file, line, snippet, recommendation) — the model adds structure and
 prioritisation, never re-detection. Same rule on the Scanner side: "copy
 code_security_findings verbatim from the tool output."
 
+### D9 — Deterministic security backstop in the Foundry Planner
+Observed: an o4-mini planner run with 7 code findings and an exposed `.env`
+produced neither SECURITY.md nor `.gitignore` — the model stochastically drops
+actions as instruction load grows. Security actions are non-negotiable
+(CLAUDE.md safety rules), so `_ensure_security_actions()` post-checks every
+parsed Foundry plan and injects the locally-generated `.gitignore` /
+SECURITY.md actions if missing, re-ranking them to the top and flagging the
+restoration in plan_summary. The model plans; Python guarantees the floor.
+
+### D10 — Knowledge base = Agents-API vector store + file_search, not portal IQ
+The installed SDK (azure-ai-agents 1.2.0b6) ships FileSearchTool with
+vector-store operations — fully scriptable provisioning, no Azure portal or
+AI Search resource needed. `scripts/setup_kb.py` uploads `kb/security-patterns/`
+(4 authored, OWASP-mapped docs) and writes FOUNDRY_KB_VECTOR_STORE_ID to .env.
+The Researcher attaches file_search alongside Tavily when the env var is set
+and must justify per-query source choice (`knowledge_sources_used` output
+field) — that source-selection reasoning is the Best Reasoning Agent demo
+moment. Gotcha: upload purpose is `"assistants"`, not `"agents"`.
+
 ### D6 — Claims hygiene in submission materials
 The M3 proposal doc leans on unverifiable stats ("45% of AI code", "nobody else
 ships this"). Per prior reviewer feedback (withdrawn 340k→140k token claim),
@@ -141,3 +160,24 @@ for any external stat.
   - PLANNER_INSTRUCTIONS: format spec + "must reference actual scan data" rule
   - Local pipeline: 4/4 verified incl. PROMPTS.md. Foundry-mode run pending
     (will validate together with the MCP catalogue change).
+- **2026-06-11** — MCP catalogue built (M3 item #3):
+  - `src/tools/mcp_catalog.py` — static curated catalogue (GitHub, Postgres,
+    Playwright, Fetch), stack-matched, max 3 recommendations. Install commands
+    human-verified — corrected Fetch to `uvx mcp-server-fetch` (the reference
+    fetch server is Python; there is no @modelcontextprotocol/server-fetch npm
+    package). Deliberately not live-researched (demo reliability).
+  - Local: `_generate_claude_md` adds "## Recommended MCP servers". Foundry:
+    recommendations computed in Python, passed in the task payload, model must
+    copy names/commands VERBATIM (same fabrication-control principle as D8).
+  - vulnerable-project hardened for demo: added pyproject.toml (+ tiny test)
+    so conventions resolve (pytest, ruff check ., app/ + tests/) — CLAUDE.md
+    and PROMPTS.md now embed real commands instead of fallbacks; still exactly
+    7 scan findings (no FPs from the new files).
+- **2026-06-11** — Foundry run validated PROMPTS.md + MCP recs (verbatim
+  commands ✅, stack-specific prompts ✅) **but dropped .gitignore and
+  SECURITY.md** → D9 backstop built and unit-tested (injects when missing,
+  no-ops when present).
+- **2026-06-11** — Foundry IQ KB built (M3 item #4, D10): 4 KB docs authored,
+  vector store `vs_qXyitIj7TGKhtmSjodZj2yMw` provisioned, Researcher wired
+  with file_search + source-choice instructions, Tavily fallback when env var
+  absent. All-up --verbose validation run in progress.

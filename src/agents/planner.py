@@ -17,6 +17,7 @@ from src.foundry_utils import (
     create_thread_and_send,
     run_agent_with_tools,
 )
+from src.tools.mcp_catalog import recommend_mcp_servers
 
 
 PLANNER_INSTRUCTIONS = """
@@ -37,6 +38,9 @@ CRITICAL CONTENT RULES:
 - Two different projects MUST produce different CLAUDE.md files — base content on the actual scan data
 - For CLAUDE.md: use readme_summary from conventions as the Overview; include the exact test_command,
   build_command, lint_command detected; reference actual key_directories; add DO NOT rules specific to the stack
+- If the input includes mcp_recommendations, add a "## Recommended MCP servers" section to CLAUDE.md:
+  one bullet per server with its "why" and its install command in backticks, copied VERBATIM —
+  never invent or alter MCP server names or install commands
 - For .cursorrules: reference the actual detected stack and frameworks; include detected linting/test tools
 - For .cursorignore: always include .env, .env.*, *.pem, *.key, node_modules/, __pycache__/, .venv/
 - For .gitignore: generate a comprehensive file appropriate to the detected stack
@@ -154,6 +158,16 @@ def _generate_claude_md(scan_result: dict, conventions: dict) -> str:
         lines.append("## Architecture")
         for d in key_dirs:
             lines.append(f"- `{d}/`")
+        lines.append("")
+
+    # MCP server recommendations — from the curated catalogue, stack-matched
+    mcp_recs = recommend_mcp_servers(stack)
+    if mcp_recs:
+        lines.append("## Recommended MCP servers")
+        lines.append("Extend your AI tool with these MCP servers (matched to this stack):")
+        for rec in mcp_recs:
+            lines.append(f"- **{rec['name']}** — {rec['why']}")
+            lines.append(f"  - Install: `{rec['install']}`")
         lines.append("")
 
     # DO NOT rules — tailored to stack
@@ -612,11 +626,14 @@ def run_with_foundry(client, scan_result: dict, research: dict) -> dict:
         instructions=PLANNER_INSTRUCTIONS,
         tools=[],
     )
+    # MCP recommendations come from the curated catalogue (deterministic),
+    # not from model knowledge — the model only formats them into CLAUDE.md
+    mcp_recommendations = recommend_mcp_servers(scan_result.get("detected_stack", []))
     task_message = (
         "Analyse the scan result and research below. "
         "Generate a complete ActionPlan JSON with actual file content for each action. "
         "Base CLAUDE.md on the real readme_summary, commands, and stack found — not a template.\n\n"
-        f"{json.dumps({'scan_result': scan_result, 'research': research}, indent=2)}"
+        f"{json.dumps({'scan_result': scan_result, 'research': research, 'mcp_recommendations': mcp_recommendations}, indent=2)}"
     )
     thread_id = create_thread_and_send(client, task_message)
     run_agent_with_tools(client, agent.id, thread_id, {})
@@ -624,4 +641,53 @@ def run_with_foundry(client, scan_result: dict, research: dict) -> dict:
     result = parse_json_response(raw)
     result["_reasoning_trace"] = reasoning
     client.agents.delete_agent(agent.id)
+    _ensure_security_actions(result, scan_result)
     return result
+
+
+def _ensure_security_actions(plan: dict, scan_result: dict) -> None:
+    """Deterministic backstop: the model plans, Python guarantees the floor.
+
+    o4-mini occasionally drops security actions as its instruction load grows
+    (observed: a run with 7 findings and an exposed .env produced neither
+    SECURITY.md nor .gitignore). Security actions are non-negotiable, so if
+    the parsed plan is missing them, inject the locally-generated versions.
+    """
+    actions = plan.setdefault("actions", [])
+    planned_files = {a.get("file") for a in actions}
+    injected: list[dict] = []
+
+    has_exposed_env = any(
+        i.get("type") == "exposed_env" for i in scan_result.get("security_issues", [])
+    )
+    if has_exposed_env and ".gitignore" not in planned_files:
+        local_plan = run({"scan_result": scan_result, "research": {}})
+        gitignore_action = next(
+            (a for a in local_plan["actions"] if a["file"] == ".gitignore"), None
+        )
+        if gitignore_action:
+            injected.append(gitignore_action)
+
+    if scan_result.get("code_security_findings") and "SECURITY.md" not in planned_files:
+        content = _generate_security_md(scan_result)
+        injected.append({
+            "tool": "security",
+            "action": "create",
+            "file": "SECURITY.md",
+            "priority": "high",
+            "reason": "Code-level security findings present — audit report is mandatory "
+                      "(restored by deterministic backstop)",
+            "content": content,
+            "expected_sections": ["Summary", "Next steps"],
+            "estimated_tokens": len(content) // 4,
+        })
+
+    if injected:
+        plan["actions"] = injected + actions
+        for i, action in enumerate(plan["actions"], start=1):
+            action["rank"] = i
+        plan["total_actions"] = len(plan["actions"])
+        plan["plan_summary"] = (
+            plan.get("plan_summary", "")
+            + f" [{len(injected)} security action(s) restored by deterministic backstop.]"
+        ).strip()
