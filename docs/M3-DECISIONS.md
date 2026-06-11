@@ -123,3 +123,21 @@ for any external stat.
     detected — pre-existing M2 behaviour, not an M3 regression. Left as-is.
   - Nothing committed yet — all M3 work (scanner, fixture, docs) is uncommitted
     on M3-Expanded-Functionality.
+- **2026-06-11** — Security scanner committed (`29d5c4c`). Foundry re-run with
+  the format spec: ✅ SECURITY.md now severity-grouped with code fences,
+  findings verbatim. Verifier reported 1/5 this run (vs 5/5 prior) — known
+  strict/qualitative variance from M2 (PROGRESS.md), amplified here because
+  vulnerable-project has no detectable test/lint commands so CLAUDE.md gets
+  placeholders. **Demo note:** demo the security story on vulnerable-project
+  and the config story on a fixture with real conventions, or add a
+  pyproject.toml to vulnerable-project.
+- **2026-06-11** — PROMPTS.md built (M3 item #2):
+  - `_generate_prompts_md()` in planner: 5 general + stack-specific prompts,
+    each embedding the real test command, key directories, and frameworks
+    (FastAPI fixture and TS/React fixture produce different libraries — verified)
+  - Scanner emits `has_prompts_md` (deterministic check via
+    read_existing_context_file in both modes) so the action only fires when
+    the file is missing — idempotency verified on a second pipeline run
+  - PLANNER_INSTRUCTIONS: format spec + "must reference actual scan data" rule
+  - Local pipeline: 4/4 verified incl. PROMPTS.md. Foundry-mode run pending
+    (will validate together with the MCP catalogue change).

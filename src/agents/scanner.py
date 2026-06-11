@@ -238,8 +238,13 @@ def run(input: dict) -> dict:
             "patterns AI assistants commonly introduce."
         )
 
+    # PROMPTS.md is a Fix My Vibe output, not a tool config — track presence so
+    # the Planner offers to create it only when missing
+    has_prompts_md = bool(read_existing_context_file(project_path, "PROMPTS.md").get("exists"))
+
     return {
         "project_path": detection.get("project_path", project_path),
+        "has_prompts_md": has_prompts_md,
         "detected_tools": tools,
         "tool_evidence": detection.get("tool_evidence", {}),
         "detected_stack": stack,
@@ -286,5 +291,9 @@ def run_with_foundry(client, project_path: str) -> dict:
     result = parse_json_response(raw)
     result["_reasoning_trace"] = reasoning
     result.setdefault("project_path", abs_path)
+    # Deterministic post-check (not model-reported): does PROMPTS.md already exist?
+    result["has_prompts_md"] = bool(
+        read_existing_context_file(abs_path, "PROMPTS.md").get("exists")
+    )
     client.agents.delete_agent(agent.id)
     return result
