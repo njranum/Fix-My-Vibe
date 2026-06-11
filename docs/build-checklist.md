@@ -39,6 +39,21 @@ _Microsoft AI Skills Fest, Agents League — Deadline June 14, 2026_
       does not support function calling. All tool execution was in Python, model only
       wrote summary paragraphs. This is the core issue addressed in Day 3.
 
+## Azure AI Search KB Integration ✅
+
+Branch: `azure-ai-search-kb`
+
+- [x] `kb/sources.json` — 32 curated sources (18 security: OWASP, CWE, NIST, framework docs; 14 best practices: Anthropic, IDE tools)
+- [x] `kb/kb_config.json` — Azure AI Search index schema (vector search + semantic ranking)
+- [x] `kb/ingest_security_kb.py` — fetch → chunk → embed (Azure OpenAI) → upload pipeline
+- [x] Index `fix-my-vibe-security-kb` live at `https://fixmyvibeiq.search.windows.net`
+- [x] `src/agents/researcher.py` — replaced Foundry `FileSearchTool` with `search_security_kb` tool (Azure AI Search, KB-first) + `search_web` (Tavily, fallback)
+- [x] End-to-end Foundry run confirmed: 4 KB queries hit Azure AI Search with results (OWASP, CWE, internal patterns)
+- [x] `knowledge_sources_used` in researcher output distinguishes KB vs. web per query
+- [x] Orchestrator label shows "Azure AI Search + Tavily" when `AZURE_SEARCH_ENDPOINT` is set
+
+Required env vars: `AZURE_SEARCH_ENDPOINT`, `AZURE_SEARCH_KEY`, `AZURE_SEARCH_INDEX`, `AZURE_OPENAI_ENDPOINT` (ingest only), `AZURE_OPENAI_KEY` (ingest only)
+
 ## Day 3 — Genuine Agentic Rewrite ✅
 
 Model: switched from Phi-4-reasoning → o4-mini (supports function calling via Agents API)

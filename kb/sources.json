@@ -1,0 +1,640 @@
+{
+  "metadata": {
+    "scope": "Security threats + Best practices for AI coding tools",
+    "threat_coverage": [
+      "Hardcoded secrets (OWASP A07)",
+      "Eval/exec vulnerabilities (OWASP A03)",
+      "SQL injection (OWASP A03)",
+      "Weak cryptography (OWASP A02)",
+      "Debug/logging leaks (OWASP A09)",
+      "Swallowed exceptions (OWASP A09)",
+      "Misconfiguration (OWASP A05)",
+      "(see below for best_practices category)"
+    ],
+    "stack_coverage": [
+      "Python",
+      "FastAPI",
+      "JavaScript",
+      "React",
+      "Node.js",
+      "Django",
+      "Express",
+      "Flask"
+    ],
+    "created": "2026-06-11",
+    "version": "1.0",
+    "refresh_cycle": "quarterly",
+    "best_practices_coverage": [
+      "Claude Code setup (CLAUDE.md, .claudeignore)",
+      "Prompt engineering patterns",
+      "Context management & optimization",
+      "Tool use & function calling",
+      "IDE configuration (Cursor, Copilot, Windsurf, Aider)",
+      "Cost optimization & efficient usage",
+      "Project structure best practices"
+    ]
+  },
+  "sources": [
+    {
+      "id": "owasp-2025-injection",
+      "title": "OWASP Top 10 2025 - A05 Injection",
+      "url": "https://raw.githubusercontent.com/OWASP/Top10/master/2025/docs/en/A05_2025-Injection.md",
+      "publication_date": "2025-01",
+      "threat_categories": ["A05-Injection", "SQL Injection", "Command Injection", "Eval/exec"],
+      "stack_applicable_to": ["all"],
+      "relevance": "primary",
+      "why_included": "Official OWASP 2025 injection category; covers SQL, command, eval/exec injection patterns",
+      "content_type": "threat definition + remediation",
+      "estimated_chunks": 8
+    },
+    {
+      "id": "owasp-2025-crypto",
+      "title": "OWASP Top 10 2025 - A04 Cryptographic Failures",
+      "url": "https://raw.githubusercontent.com/OWASP/Top10/master/2025/docs/en/A04_2025-Cryptographic_Failures.md",
+      "publication_date": "2025-01",
+      "threat_categories": ["A04-Cryptographic Failures", "Weak Crypto", "Hardcoded Secrets"],
+      "stack_applicable_to": ["all"],
+      "relevance": "primary",
+      "why_included": "Official OWASP 2025 crypto failures category; covers weak algorithms, key management, secrets exposure",
+      "content_type": "threat definition + remediation",
+      "estimated_chunks": 8
+    },
+    {
+      "id": "owasp-2025-auth",
+      "title": "OWASP Top 10 2025 - A07 Authentication Failures",
+      "url": "https://raw.githubusercontent.com/OWASP/Top10/master/2025/docs/en/A07_2025-Authentication_Failures.md",
+      "publication_date": "2025-01",
+      "threat_categories": ["A07-Authentication Failures", "Credential Management", "Session Management"],
+      "stack_applicable_to": ["all"],
+      "relevance": "primary",
+      "why_included": "Official OWASP 2025 authentication failures; covers hardcoded credentials, weak password policies",
+      "content_type": "threat definition + remediation",
+      "estimated_chunks": 8
+    },
+    {
+      "id": "owasp-2025-logging",
+      "title": "OWASP Top 10 2025 - A09 Security Logging and Alerting Failures",
+      "url": "https://raw.githubusercontent.com/OWASP/Top10/master/2025/docs/en/A09_2025-Security_Logging_and_Alerting_Failures.md",
+      "publication_date": "2025-01",
+      "threat_categories": ["A09-Security Logging and Monitoring Failures", "Secrets in Logs", "Swallowed Exceptions"],
+      "stack_applicable_to": ["all"],
+      "relevance": "primary",
+      "why_included": "Official OWASP 2025 logging failures; covers secrets in logs, missing audit trails, swallowed exceptions",
+      "content_type": "threat definition + remediation",
+      "estimated_chunks": 8
+    },
+    {
+      "id": "owasp-2025-access-control",
+      "title": "OWASP Top 10 2025 - A01 Broken Access Control",
+      "url": "https://raw.githubusercontent.com/OWASP/Top10/master/2025/docs/en/A01_2025-Broken_Access_Control.md",
+      "publication_date": "2025-01",
+      "threat_categories": ["A01-Broken Access Control", "Authorization", "Privilege Escalation"],
+      "stack_applicable_to": ["all"],
+      "relevance": "primary",
+      "why_included": "Official OWASP 2025 access control category; most common vulnerability class",
+      "content_type": "threat definition + remediation",
+      "estimated_chunks": 8
+    },
+    {
+      "id": "cwe-top-25-2025",
+      "title": "CWE Top 25 Most Dangerous Software Weaknesses",
+      "url": "https://cwe.mitre.org/top25/archive/2025/2025_cwe_top25.html",
+      "publication_date": "2025-01",
+      "threat_categories": [
+        "CWE-89: SQL Injection",
+        "CWE-79: Cross-site Scripting",
+        "CWE-78: OS Command Injection",
+        "CWE-90: Improper Neutralization",
+        "CWE-94: Improper Control of Generation",
+        "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code",
+        "CWE-327: Use of a Broken or Risky Cryptographic Algorithm",
+        "CWE-798: Use of Hard-Coded Credentials"
+      ],
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "primary",
+      "why_included": "Industry consensus on most dangerous weaknesses; technical depth beyond OWASP; direct mapping to eval/exec, SQL injection, crypto",
+      "content_type": "technical CWE definitions + exploitation context",
+      "estimated_chunks": 35
+    },
+    {
+      "id": "nist-secure-coding",
+      "title": "NIST Secure Software Development Framework (SSDF)",
+      "url": "https://csrc.nist.gov/Projects/ssdf",
+      "publication_date": "2024-01",
+      "threat_categories": [
+        "Secrets Management",
+        "Cryptographic Practices",
+        "Input Validation",
+        "Exception Handling"
+      ],
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "primary",
+      "why_included": "Government-backed standard; language-agnostic; covers secrets + crypto + exception handling",
+      "content_type": "secure development practices + implementation guidance",
+      "estimated_chunks": 25
+    },
+    {
+      "id": "anthropic-security-best-practices",
+      "title": "Anthropic Security Best Practices for Claude",
+      "url": "https://docs.anthropic.com/en/docs/guides/security",
+      "publication_date": "2024-06",
+      "threat_categories": [
+        "API Security",
+        "Credential Management",
+        "Data Privacy",
+        "Prompt Injection Prevention"
+      ],
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "primary",
+      "why_included": "Directly relevant to AI-introduced security issues; covers hardcoded secrets in prompts",
+      "content_type": "API security practices + example payloads",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "owasp-secrets-management",
+      "title": "OWASP - Secrets Management Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html",
+      "publication_date": "2023-06",
+      "threat_categories": [
+        "A07-Hardcoded Secrets",
+        "Credential Storage"
+      ],
+      "stack_applicable_to": [
+        "python",
+        "javascript",
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "Deep dive on hardcoded secrets; covers .env patterns, secret managers, rotation",
+      "content_type": "practices + code examples",
+      "estimated_chunks": 20
+    },
+    {
+      "id": "owasp-python-security",
+      "title": "OWASP - Input Validation Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html",
+      "publication_date": "2023-09",
+      "threat_categories": [
+        "A03-Injection",
+        "A02-Cryptography",
+        "A05-Misconfiguration",
+        "A09-Logging"
+      ],
+      "stack_applicable_to": [
+        "python",
+        "fastapi",
+        "django",
+        "flask"
+      ],
+      "relevance": "high",
+      "why_included": "Covers eval/exec, SQL injection, input sanitization; Python Security Cheat Sheet was removed from OWASP; this is the closest active replacement",
+      "content_type": "vulnerable code + fixes + best practices",
+      "estimated_chunks": 30
+    },
+    {
+      "id": "fastapi-security-docs",
+      "title": "FastAPI Security Documentation",
+      "url": "https://fastapi.tiangolo.com/tutorial/security/",
+      "publication_date": "2024-01",
+      "threat_categories": [
+        "A01-Authentication",
+        "A02-Cryptography",
+        "A05-Security Headers"
+      ],
+      "stack_applicable_to": [
+        "fastapi"
+      ],
+      "relevance": "high",
+      "why_included": "Framework-specific security patterns for FastAPI; TLS, CORS, dependency injection security",
+      "content_type": "framework guidance + example code",
+      "estimated_chunks": 20
+    },
+    {
+      "id": "django-security-docs",
+      "title": "Django Security Documentation",
+      "url": "https://docs.djangoproject.com/en/stable/topics/security/",
+      "publication_date": "2024-02",
+      "threat_categories": [
+        "A03-SQL Injection (ORM protection)",
+        "A05-CSRF Protection",
+        "A05-Security Settings",
+        "A09-Logging"
+      ],
+      "stack_applicable_to": [
+        "django"
+      ],
+      "relevance": "high",
+      "why_included": "Django-specific hardening; SQL injection via ORM, CSRF tokens, DEBUG setting risks",
+      "content_type": "framework security features + configuration",
+      "estimated_chunks": 25
+    },
+    {
+      "id": "owasp-javascript-security",
+      "title": "OWASP - JavaScript Security Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html",
+      "publication_date": "2023-08",
+      "threat_categories": [
+        "A03-Code Injection",
+        "A02-Cryptography (in Node.js)",
+        "Eval/exec vulnerabilities"
+      ],
+      "stack_applicable_to": [
+        "javascript",
+        "react",
+        "nodejs"
+      ],
+      "relevance": "high",
+      "why_included": "eval() / Function() injection prevention; client-side injection patterns",
+      "content_type": "vulnerable patterns + fixes",
+      "estimated_chunks": 18
+    },
+    {
+      "id": "express-security-best-practices",
+      "title": "Express.js Security Best Practices",
+      "url": "https://expressjs.com/en/advanced/best-practice-security.html",
+      "publication_date": "2024-01",
+      "threat_categories": [
+        "A05-Security Headers",
+        "A02-SSL/TLS",
+        "A07-Authentication",
+        "Input Validation"
+      ],
+      "stack_applicable_to": [
+        "express",
+        "nodejs"
+      ],
+      "relevance": "high",
+      "why_included": "Express-specific patterns; helmet.js, HTTPS, input validation",
+      "content_type": "best practices + middleware recommendations",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "nist-crypto-guidelines",
+      "title": "NIST Special Publication 800-57 Part 1 Rev 5 (Cryptographic Key Management)",
+      "url": "https://csrc.nist.gov/publications/detail/sp/800-57-part-1/rev-5/final",
+      "publication_date": "2022-12",
+      "threat_categories": [
+        "A02-Cryptographic Failures",
+        "CWE-327: Broken Crypto"
+      ],
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "Authority on cryptographic algorithm selection; weak vs modern crypto standards",
+      "content_type": "technical guidelines + algorithm recommendations",
+      "estimated_chunks": 20
+    },
+    {
+      "id": "owasp-logging-cheatsheet",
+      "title": "OWASP - Logging Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html",
+      "publication_date": "2023-07",
+      "threat_categories": [
+        "A09-Security Logging and Monitoring Failures",
+        "Secrets in Logs"
+      ],
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "How to log securely without exposing secrets; exception handling best practices",
+      "content_type": "logging patterns + sanitization rules",
+      "estimated_chunks": 20
+    },
+    {
+      "id": "cwe-eval-exec",
+      "title": "CWE-94: Improper Control of Generation of Code (Code Injection)",
+      "url": "https://cwe.mitre.org/data/definitions/94.html",
+      "publication_date": "2024-01",
+      "threat_categories": [
+        "A03-Injection",
+        "Eval/exec"
+      ],
+      "stack_applicable_to": [
+        "python",
+        "javascript",
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "Technical depth on eval(), exec(), Function() injection patterns and mitigations",
+      "content_type": "technical CWE definition + real-world examples",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "cwe-sql-injection",
+      "title": "CWE-89: SQL Injection",
+      "url": "https://cwe.mitre.org/data/definitions/89.html",
+      "publication_date": "2024-01",
+      "threat_categories": [
+        "A03-Injection",
+        "SQL Injection"
+      ],
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "Canonical reference on SQL injection; string interpolation vs parameterized queries",
+      "content_type": "technical definition + consequences",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "fix-my-vibe-security-patterns",
+      "title": "Fix My Vibe Internal Security Patterns (kb/security-patterns/)",
+      "url": "local://hackathon/kb/security-patterns/",
+      "publication_date": "2026-06-11",
+      "threat_categories": [
+        "All 7 categories"
+      ],
+      "stack_applicable_to": [
+        "python",
+        "fastapi",
+        "javascript",
+        "react"
+      ],
+      "relevance": "high",
+      "why_included": "Already authored, tested against vulnerable fixtures; directly aligned with scanner",
+      "content_type": "patterns + fixes + stack-specific guidance",
+      "estimated_chunks": 25
+    },
+    {
+      "id": "python-crypto-module-best-practices",
+      "title": "Python 'cryptography' Library Best Practices",
+      "url": "https://cryptography.io/en/latest/hazmat/primitives/",
+      "publication_date": "2024-02",
+      "threat_categories": [
+        "A02-Cryptographic Failures",
+        "Weak/Outdated Crypto"
+      ],
+      "stack_applicable_to": [
+        "python"
+      ],
+      "relevance": "medium",
+      "why_included": "Modern crypto for Python; AES, HMAC, key derivation; move away from MD5/SHA1",
+      "content_type": "API documentation + safe patterns",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "nodejs-crypto-module",
+      "title": "Node.js Crypto Module Documentation",
+      "url": "https://nodejs.org/en/learn/getting-started/security-best-practices",
+      "publication_date": "2024-01",
+      "threat_categories": [
+        "A02-Cryptographic Failures",
+        "Weak Crypto + secrets module"
+      ],
+      "stack_applicable_to": [
+        "nodejs",
+        "javascript"
+      ],
+      "relevance": "medium",
+      "why_included": "crypto.randomBytes() vs Math.random(); TLS configuration; module security",
+      "content_type": "module docs + security guidance",
+      "estimated_chunks": 12
+    },
+    {
+      "id": "owasp-exception-handling",
+      "title": "OWASP - Error Handling Cheat Sheet",
+      "url": "https://cheatsheetseries.owasp.org/cheatsheets/Error_Handling_Cheat_Sheet.html",
+      "publication_date": "2023-08",
+      "threat_categories": [
+        "A09-Security Logging and Monitoring Failures",
+        "Swallowed Exceptions"
+      ],
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "medium",
+      "why_included": "Proper exception handling; avoiding silent failures; logging security-relevant errors",
+      "content_type": "best practices + anti-patterns",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "anthropic-build-with-claude",
+      "title": "Anthropic: Build with Claude - Model Capabilities & Best Practices",
+      "url": "https://docs.anthropic.com/en/docs/build-with-claude",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "primary",
+      "why_included": "Official Anthropic guide on building effectively with Claude; covers model capabilities, context management, files/assets",
+      "content_type": "API guide + best practices + patterns",
+      "estimated_chunks": 30
+    },
+    {
+      "id": "anthropic-prompt-engineering",
+      "title": "Anthropic: Prompt Engineering Guide",
+      "url": "https://docs.anthropic.com/en/docs/build-with-claude/advanced-techniques",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "primary",
+      "why_included": "How to write effective prompts for Claude; structuring context, using examples, optimization techniques",
+      "content_type": "guide + examples + anti-patterns",
+      "estimated_chunks": 25
+    },
+    {
+      "id": "anthropic-cookbook",
+      "title": "Anthropic Cookbook - Code Examples & Recipes",
+      "url": "https://github.com/anthropics/anthropic-cookbook",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "Production-ready patterns for RAG, classification, tool use, multi-turn conversations, vision tasks",
+      "content_type": "code examples + patterns + workflows",
+      "estimated_chunks": 40
+    },
+    {
+      "id": "anthropic-vision-guide",
+      "title": "Anthropic: Vision Capabilities Guide",
+      "url": "https://docs.anthropic.com/en/docs/build-with-claude/vision",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "medium",
+      "why_included": "How to use Claude's vision capabilities; image handling, multimodal prompts",
+      "content_type": "guide + code examples",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "anthropic-tool-use",
+      "title": "Anthropic: Tool Use & Function Calling",
+      "url": "https://docs.anthropic.com/en/docs/build-with-claude/tool-use",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "How to structure tool definitions for Claude; patterns for reliable tool orchestration",
+      "content_type": "guide + schema examples",
+      "estimated_chunks": 20
+    },
+    {
+      "id": "anthropic-context-management",
+      "title": "Anthropic: Context Management & Cache Optimization",
+      "url": "https://docs.anthropic.com/en/docs/build-with-claude/managing-context",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "How to manage context windows; prompt caching for cost/performance; long-running sessions",
+      "content_type": "optimization guide + patterns",
+      "estimated_chunks": 20
+    },
+    {
+      "id": "claude-code-best-practices",
+      "title": "Claude Code Best Practices (Anthropic + Community)",
+      "url": "https://docs.anthropic.com/en/docs/build-with-claude/claude-code",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "How to structure projects for Claude Code; CLAUDE.md patterns, .claudeignore setup, context organization",
+      "content_type": "patterns + setup guide + examples",
+      "estimated_chunks": 25
+    },
+    {
+      "id": "vscode-claude-extension-guide",
+      "title": "Claude Code IDE Integrations (VS Code & JetBrains)",
+      "url": "https://docs.anthropic.com/en/docs/claude-code/ide-integrations",
+      "publication_date": "2024-05",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "How to use Claude Code in VS Code and JetBrains; IDE integration patterns, keyboard shortcuts, workflow optimization",
+      "content_type": "extension guide + workflow patterns",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "anthropic-evaluation-guide",
+      "title": "Anthropic: Evaluating Claude's Outputs",
+      "url": "https://docs.anthropic.com/en/docs/build-with-claude/evaluate-outputs",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "How to test, validate, and measure Claude's performance; evals framework, benchmarking patterns",
+      "content_type": "evaluation framework + examples",
+      "estimated_chunks": 20
+    },
+    {
+      "id": "anthropic-cost-optimization",
+      "title": "Anthropic: Cost Optimization & Efficient Usage",
+      "url": "https://docs.anthropic.com/en/docs/manage-claude/usage-cost-api",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "high",
+      "why_included": "Batch processing, prompt caching, token optimization techniques for cost-effective Claude usage",
+      "content_type": "optimization guide + patterns",
+      "estimated_chunks": 18
+    },
+    {
+      "id": "cursor-best-practices",
+      "title": "Cursor IDE Best Practices & Configuration",
+      "url": "https://raw.githubusercontent.com/getcursor/cursor/main/README.md",
+      "publication_date": "2024-05",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "medium",
+      "why_included": "How to structure Cursor rules (.cursorrules); project setup for Cursor IDE; .cursorignore patterns",
+      "content_type": "configuration guide + patterns + examples",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "github-copilot-setup",
+      "title": "GitHub Copilot Best Practices & Configuration",
+      "url": "https://docs.github.com/en/copilot/using-github-copilot",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "medium",
+      "why_included": "How to configure Copilot (copilot-instructions.md); .copilotignore patterns, optimal project structure",
+      "content_type": "configuration guide + best practices",
+      "estimated_chunks": 15
+    },
+    {
+      "id": "aider-setup-guide",
+      "title": "Aider: AI-Driven Pair Programming Tool Setup",
+      "url": "https://aider.chat/docs/",
+      "publication_date": "2024-05",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "medium",
+      "why_included": "How to set up Aider; git integration patterns, context management, configuration options",
+      "content_type": "setup guide + patterns",
+      "estimated_chunks": 12
+    },
+    {
+      "id": "windsurf-docs",
+      "title": "Windsurf IDE Documentation",
+      "url": "https://docs.codeium.com/windsurf",
+      "publication_date": "2024-06",
+      "threat_categories": [],
+      "category": "best_practices",
+      "stack_applicable_to": [
+        "all"
+      ],
+      "relevance": "medium",
+      "why_included": "How to configure and use Windsurf; project setup, flow mode optimization",
+      "content_type": "IDE guide + configuration",
+      "estimated_chunks": 12
+    }
+  ],
+  "summary": {
+    "total_sources": 32,
+    "estimated_total_chunks": 607,
+    "estimated_ingestion_time": "2-3 minutes (batched embeddings)",
+    "estimated_index_size": "~50-100 MB",
+    "refresh_strategy": "Quarterly re-check OWASP/CWE for updates; annual deep refresh",
+    "sources_by_category": {
+      "security": 18,
+      "best_practices": 14
+    }
+  }
+}

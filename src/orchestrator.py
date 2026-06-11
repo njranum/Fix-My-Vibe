@@ -111,7 +111,7 @@ def run_with_foundry(project_path: str, confirm_fn=None, verbose: bool = False) 
         _print_reasoning_trace(scan_result, "Scanner")
     _print_scan_summary(scan_result)
 
-    kb_label = "KB + Tavily" if os.environ.get("FOUNDRY_KB_VECTOR_STORE_ID") else "Tavily"
+    kb_label = "Azure AI Search + Tavily" if os.environ.get("AZURE_SEARCH_ENDPOINT") else "Tavily"
     print(f"\n[ 2/5 ] Researcher agent running ({kb_label})...")
     research_result = researcher.run_with_foundry(client, scan_result)
     if verbose:

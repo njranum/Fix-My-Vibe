@@ -1,7 +1,7 @@
 """
 src/agents/researcher.py
-Researcher agent: uses Tavily to fetch current best practices
-for each detected AI tool and the project's stack.
+Researcher agent: uses Azure AI Search KB (primary) + Tavily web search (fallback)
+to fetch current best practices for each detected AI tool and the project's stack.
 Produces structured research that feeds the Planner.
 """
 
@@ -27,11 +27,11 @@ for AI coding tool configuration and security guidance for the detected stack.
 You will be given a JSON scan result with detected_tools, detected_stack, and possibly
 code_security_findings.
 
-You may have TWO knowledge sources — choose deliberately per question:
-- file_search (curated knowledge base): authoritative, OWASP-mapped reference on security
+You have TWO knowledge sources — choose deliberately per question:
+- search_security_kb (Azure AI Search): authoritative, OWASP-mapped reference on security
   patterns AI assistants introduce, per stack, plus AI tool config hygiene. PREFER this for
   anything security-related: explaining scan findings, security_notes, what to exclude from
-  AI context files.
+  AI context files. Supports optional stack_filter and threat_filter parameters.
 - search_web: live web search. Use for current tool documentation, config file formats,
   and community practices that change over time.
 For every query you make, know WHY that source: curated = trusted and stable; web = current.
@@ -77,26 +77,104 @@ Return ONLY the JSON — no markdown fences, no preamble.
 """
 
 
-def _get_tool_definitions() -> list[dict]:
-    return [
-        {
+def _get_tool_definitions(has_azure_search: bool = False) -> list[dict]:
+    tools = []
+    if has_azure_search:
+        tools.append({
             "type": "function",
             "function": {
-                "name": "search_web",
-                "description": "Search the web for current best practices, documentation, and security guidance for AI coding tools and frameworks",
+                "name": "search_security_kb",
+                "description": (
+                    "Search the curated Azure AI Search security knowledge base for threat patterns, "
+                    "OWASP guidance, stack-specific remediation, and AI tool config best practices. "
+                    "Use this FIRST for any security or configuration topic."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "The search query"}
+                        "query": {"type": "string", "description": "Natural language search query"},
+                        "stack_filter": {
+                            "type": "string",
+                            "description": "Optional: filter by stack (python, fastapi, javascript, react, nodejs, django, express, flask)",
+                        },
+                        "threat_filter": {
+                            "type": "string",
+                            "description": "Optional: filter by threat type (injection, crypto, logging, config, secrets, auth)",
+                        },
                     },
                     "required": ["query"],
                 },
             },
-        }
-    ]
+        })
+    tools.append({
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": (
+                "Search the web for current best practices, documentation, and security guidance. "
+                "Use for current tool documentation and community practices. "
+                "Fallback when the KB has no results for a query."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search query"}
+                },
+                "required": ["query"],
+            },
+        },
+    })
+    return tools
 
 
 def _make_tool_handlers() -> dict:
+    def search_security_kb(args: dict) -> dict:
+        from azure.search.documents import SearchClient
+        from azure.core.credentials import AzureKeyCredential
+
+        print(f"  [KB] search_security_kb query={args['query']!r} stack={args.get('stack_filter')} threat={args.get('threat_filter')}", flush=True)
+
+        endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT")
+        key = os.environ.get("AZURE_SEARCH_KEY")
+        index_name = os.environ.get("AZURE_SEARCH_INDEX", "fix-my-vibe-security-kb")
+
+        if not endpoint or not key:
+            return {"results": [], "error": "Azure AI Search not configured"}
+
+        client = SearchClient(
+            endpoint=endpoint,
+            index_name=index_name,
+            credential=AzureKeyCredential(key),
+        )
+
+        query = args["query"]
+        stack_filter = args.get("stack_filter")
+        threat_filter = args.get("threat_filter")
+
+        # Fold stack/threat hints into the query text — the index fields are not
+        # marked filterable so OData filter expressions are unavailable.
+        enriched_query = " ".join(filter(None, [query, stack_filter, threat_filter]))
+
+        results = client.search(
+            search_text=enriched_query,
+            search_mode="any",
+            select=["content", "source_url", "source_title", "threat_categories", "stack_applicable_to"],
+            top=5,
+        )
+
+        formatted = []
+        for r in results:
+            formatted.append({
+                "title": r.get("source_title", ""),
+                "url": r.get("source_url", ""),
+                "content": r.get("content", "")[:800],
+                "threats": r.get("threat_categories", []),
+                "stacks": r.get("stack_applicable_to", []),
+            })
+
+        print(f"  [KB] → {len(formatted)} results", flush=True)
+        return {"results": formatted, "source": "azure_ai_search"}
+
     def search_web(args: dict) -> dict:
         from tavily import TavilyClient
         tavily = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
@@ -111,12 +189,13 @@ def _make_tool_handlers() -> dict:
                 for r in response.get("results", [])
             ]
         }
-    return {"search_web": search_web}
+
+    return {"search_security_kb": search_security_kb, "search_web": search_web}
 
 
 def run(input: dict) -> dict:
     """
-    Standalone interface: return static best-practice research without Bing.
+    Standalone interface: return static best-practice research without Azure.
     Used as fallback when Azure is unavailable.
     """
     detected_tools = input.get("detected_tools", [])
@@ -231,7 +310,7 @@ def run(input: dict) -> dict:
     return {
         "research": research_for_detected,
         "stack_context": f"Project uses {stack_str}. Config files should reference the specific frameworks and their conventions.",
-        "search_summary": "Static best-practice knowledge used (Bing Grounding unavailable in local mode)",
+        "search_summary": "Static best-practice knowledge used (Azure unavailable in local mode)",
         "mode": "local",
     }
 
@@ -241,32 +320,28 @@ def run_with_foundry(client, scan_result: dict) -> dict:
 
     o4-mini decides what to search for and how many queries to run based on
     the scan result. The model chooses queries — Python only executes them.
+    KB-first: search_security_kb (Azure AI Search) is preferred for security
+    topics; search_web (Tavily) is the fallback for novel/current queries.
     """
-    # Attach the curated security KB (file_search) when provisioned — the model
-    # then chooses between curated knowledge and live web per query.
-    # Setup: scripts/setup_kb.py writes FOUNDRY_KB_VECTOR_STORE_ID to .env.
-    tools = _get_tool_definitions()
-    tool_resources = None
-    kb_vector_store_id = os.environ.get("FOUNDRY_KB_VECTOR_STORE_ID")
-    if kb_vector_store_id:
-        from azure.ai.agents.models import FileSearchTool
-        file_search = FileSearchTool(vector_store_ids=[kb_vector_store_id])
-        tools = file_search.definitions + tools
-        tool_resources = file_search.resources
+    has_azure_search = bool(os.environ.get("AZURE_SEARCH_ENDPOINT"))
+    tools = _get_tool_definitions(has_azure_search)
 
     agent = client.agents.create_agent(
         model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
         name="fix-my-vibe-researcher",
         instructions=RESEARCHER_INSTRUCTIONS,
         tools=tools,
-        tool_resources=tool_resources,
     )
-    source_hint = (
-        "You have BOTH the curated security knowledge base (file_search) and web search — "
-        "prefer the knowledge base for security topics, the web for current tool docs. "
-        if kb_vector_store_id
-        else "Only web search is available in this run. "
-    )
+
+    if has_azure_search:
+        source_hint = (
+            "You have BOTH the curated security knowledge base (search_security_kb) and web search — "
+            "prefer the knowledge base for security topics, the web for current tool docs. "
+            "The KB has OWASP, CWE, NIST, and framework-specific security patterns. "
+        )
+    else:
+        source_hint = "Only web search is available in this run. "
+
     task_message = (
         "Research current best practices for the AI coding tools and stack detected in this project. "
         + source_hint +

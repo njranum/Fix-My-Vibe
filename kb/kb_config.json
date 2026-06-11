@@ -1,0 +1,72 @@
+{
+  "index_name": "fix-my-vibe-security-kb",
+  "description": "Security knowledge base for Fix My Vibe scanner — threat patterns, OWASP, stack-specific guidance",
+  "created": "2026-06-11",
+  "version": "1.0",
+  "embedding_config": {
+    "model": "text-embedding-3-small",
+    "dimensions": 1536,
+    "batch_size": 100,
+    "note": "Uses Azure OpenAI embeddings service; set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_KEY"
+  },
+  "chunking_strategy": {
+    "type": "threat_aware",
+    "target_tokens_per_chunk": 500,
+    "overlap_tokens": 200,
+    "min_chunk_length": 100,
+    "note": "Chunks break on threat/pattern boundaries, preserving semantic context"
+  },
+  "schema": {
+    "id": "document identifier (MD5 hash of source + chunk index)",
+    "content": "cleaned chunk text (searchable, retrievable)",
+    "source_url": "URL of source document (retrievable for citations)",
+    "source_title": "Human-readable source name (retrievable)",
+    "threat_categories": "Array of threat types: injection, crypto, logging, config, secrets, etc.",
+    "owasp_mappings": "OWASP Top 10 codes: A01, A02, A03, A05, A07, A09",
+    "stack_applicable_to": "Array of stacks: python, fastapi, javascript, react, nodejs, django, express, flask",
+    "chunk_index": "Position in source document (0-indexed)",
+    "source_publication_date": "ISO format date for freshness tracking (YYYY-MM)",
+    "embeddings": "1536-dimensional vector (searchable, vector search enabled)"
+  },
+  "search_config": {
+    "query_type": "semantic",
+    "note": "Supports vector search + semantic ranking; enable hybrid search for both semantic + keyword",
+    "semantic_config": "default",
+    "top_k_default": 5,
+    "timeout_seconds": 10
+  },
+  "metadata_filters": {
+    "threat_category": "Filter results by threat (injection, crypto, logging, etc.)",
+    "stack_applicable_to": "Filter by stack (python, fastapi, javascript, react, nodejs, etc.)",
+    "owasp_mappings": "Filter by OWASP category (A02, A07, etc.)",
+    "note": "Researcher agent can use filters to narrow results by detected stack"
+  },
+  "integration_with_researcher_agent": {
+    "tool_name": "azure_ai_search",
+    "query_pattern": "Search for [threat] on [stack]: Researcher passes stack context to filter results",
+    "citation_source": "source_url field is used for grounding/citations",
+    "fallback": "If no results, Researcher falls back to Tavily web search",
+    "example_query": "SELECT * FROM fix-my-vibe-security-kb WHERE threat_categories contains 'injection' AND stack_applicable_to contains 'fastapi'"
+  },
+  "maintenance": {
+    "refresh_cycle": "quarterly",
+    "refresh_checklist": [
+      "Check OWASP Top 10 for updates (released annually, Jan)",
+      "Check CWE Top 25 for updates (released annually, Jan)",
+      "Check NIST SSDF for new guidance",
+      "Verify all source URLs still live (no paywalls, redirects)",
+      "Add new framework guidance as Fix My Vibe scanner expands"
+    ],
+    "re_indexing": "Run ingest_security_kb.py again with updated sources.json to re-create index"
+  },
+  "monitoring": {
+    "log_file": "kb_ingestion.log",
+    "metrics_to_track": [
+      "total_chunks_indexed",
+      "failed_source_fetches",
+      "average_chunk_size (tokens)",
+      "embedding_generation_time",
+      "index_size_mb"
+    ]
+  }
+}
