@@ -311,7 +311,6 @@ def infer_project_conventions(project_path: str) -> dict:
         "package_manager": None,
         "python_version": None,
         "formatting": None,
-        "import_style": None,
         "pre_commit": False,
         "naming_conventions": {},
         "key_directories": [],
