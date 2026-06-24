@@ -1,6 +1,22 @@
 # Fix My Vibe — Progress
 
-_Updated: 2026-06-11 (Day 5, branch `azure-ai-search-kb`) — Azure AI Search KB integrated_
+_Updated: 2026-06-24 (branch `azure-ai-search-kb`) — Azure MCP server added for direct index inspection_
+
+---
+
+## What Was Built (2026-06-24 session)
+
+### Azure MCP Server configured
+
+Added `@azure/mcp` (v3.0.0-beta.17) as a Claude Code MCP server for this project:
+
+```
+claude mcp add azure-mcp -- npx -y @azure/mcp@latest server start
+```
+
+Uses existing `az login` credentials (`nicjranum@gmail.com`). Gives Claude Code direct
+access to Azure AI Search (list indexes, query KB, inspect schemas), Storage, Foundry,
+and more — no separate API key needed. Config lives in `.claude.json` (project-local).
 
 ---
 
@@ -89,13 +105,18 @@ Full decision record with rationale: `docs/M3-DECISIONS.md` (D1–D10 + run log)
 
 ---
 
+## Project Status
+
+The Agents League hackathon (deadline June 14, 2026) has **concluded** — this is no
+longer a submission sprint. Fix My Vibe continues as an ongoing personal project; the
+goal now is a complete, stable, usable tool. Tasks below are framed for that, not for
+a hackathon submission. (Separate prototype repo at `../fmv2` is retained, not retired.)
+
 ## Next Immediate Tasks
 
-1. Merge `azure-ai-search-kb` branch → main
-2. README.md for submission (install, azd, demo instructions)
-3. Demo video 3–5 min: `--verbose` on vulnerable-project — show scan findings →
-   KB-cited research → plan → confirmation gate → SECURITY.md/PROMPTS.md
-4. `pyproject.toml` — entry point so `pip install -e .` creates `fix-my-vibe` command
-5. `infra/main.bicep` — azd template: AI Services + o4-mini + Azure AI Search resources
-6. Register at aka.ms/AgentsLeague/AISF; submit at
-   https://github.com/microsoft/agentsleague/issues (deadline June 14, 11:59 PM PT)
+1. ✅ Merge `azure-ai-search-kb` branch → main (done — main now has the Azure AI Search KB)
+2. README.md — install, configure, and run instructions for general use
+3. `pyproject.toml` — entry point so `pip install -e .` creates the `fix-my-vibe` command
+4. `infra/main.bicep` — azd template: AI Services + o4-mini + Azure AI Search resources
+5. Address open quality items (convention inference depth, OData filterable fields — see
+   CLAUDE.md Known Issues)

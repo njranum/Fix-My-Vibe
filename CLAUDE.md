@@ -1,8 +1,10 @@
 # Fix My Vibe — CLAUDE.md
 
-> **Hackathon:** Microsoft AI Skills Fest — Agents League  
-> **Deadline:** June 14, 2026, 11:59 PM PT  
-> **Target prize:** Best Reasoning Agent (secondary: Best Use of IQ Tools, Hack for Good, Top Student Award)
+> **Status:** Ongoing personal project. The Microsoft AI Skills Fest — Agents League
+> hackathon it was originally built for (deadline June 14, 2026) has **concluded** —
+> there is no submission deadline to chase. Development continues toward a complete,
+> stable tool; prioritize correctness and finishing the build over hackathon framing.
+> _Original hackathon target was Best Reasoning Agent (secondary: Best Use of IQ Tools)._
 
 ---
 
