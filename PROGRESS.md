@@ -59,9 +59,22 @@ claude mcp add fix-my-vibe -- /path/to/.venv/bin/python3 /path/to/src/mcp_server
 - Fail-safe: no-elicitation-capability, declined, and tick-nothing all write zero files.
 - CLI `--local --yes` and `--scan-only --local` still work end to end.
 
+### Registered + e2e verified (2026-06-25 session)
+
+- Installed `mcp` 1.28.0 into the venv.
+- Registered with Claude Code at **local scope** (private to this project, in
+  `~/.claude.json`) — matches the existing `azure-mcp` registration and avoids committing a
+  machine-specific venv path to a repo-tracked `.mcp.json`. `claude mcp list` shows
+  `fix-my-vibe ✔ Connected`.
+- Ran a scripted e2e of `apply_fixes` (elicitation mocked, per the confirm-gate rule) on
+  `/tmp` fixture copies: accept-subset writes only ticked files; no-elicitation →
+  `needs_review` (0 writes); decline → `cancelled` (0 writes); overwrite creates a `.bak`.
+- Full registration + test guide: `docs/MCP_SERVER.md`.
+
 ### Next immediate task
 
-- Manual end-to-end in a real Claude Code session against `/tmp/fmv-demo`.
+- Manual live UI test in a **fresh** Claude Code session against `/tmp/fmv-demo` (confirm the
+  elicitation checkbox prompt renders). Steps in `docs/MCP_SERVER.md`.
 - Optional: test `apply_fixes` in Foundry mode (requires Azure creds + `az login`).
 
 ---
