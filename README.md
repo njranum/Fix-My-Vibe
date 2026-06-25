@@ -1,5 +1,7 @@
 # Fix My Vibe
 
+[![CI](https://github.com/njranum/Fix-My-Vibe/actions/workflows/ci.yml/badge.svg)](https://github.com/njranum/Fix-My-Vibe/actions/workflows/ci.yml)
+
 > An MCP server (and CLI) that diagnoses and fixes your AI coding tool setup —
 > right inside the editor you already use.
 
