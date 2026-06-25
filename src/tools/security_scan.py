@@ -223,6 +223,55 @@ def _check_line(line: str, is_python: bool) -> list[dict]:
     return findings
 
 
+def scan_text(content: str, is_python: bool, file_label: str) -> list[dict]:
+    """Scan already-read source text. Returns ALL findings (no cap).
+
+    Shared by the directory scanner and the single-file scanner so both apply
+    identical line/docstring/suppression logic. Each finding is tagged with
+    ``file`` = file_label and ``line``.
+    """
+    findings: list[dict] = []
+    # Track triple-quoted string state across lines (Python docstrings /
+    # multi-line strings): a line that *starts* inside one is prose, not code.
+    in_triple = False
+    for line_no, line in enumerate(content.splitlines(), start=1):
+        line_starts_in_triple = in_triple
+        if is_python:
+            in_triple = (in_triple + line.count('"""') + line.count("'''")) % 2 == 1
+        if line_starts_in_triple:
+            continue
+        for finding in _check_line(line, is_python):
+            finding["file"] = file_label
+            finding["line"] = line_no
+            findings.append(finding)
+    return findings
+
+
+def scan_file(file_path: str, file_label: str | None = None) -> dict:
+    """Scan ONE source file with NO finding cap. Used by the remediation harness
+    to verify a fix (finding cleared / no new findings) on a single edited file.
+
+    Returns {"file", "findings", "summary"} or {"error": ...}. Unlike
+    scan_security_patterns, never truncates — verification needs the complete set.
+    """
+    p = Path(file_path).resolve()
+    if not p.exists() or not p.is_file():
+        return {"error": f"Not a file: {file_path}"}
+    label = file_label if file_label is not None else p.name
+    if p.suffix not in _SOURCE_EXTENSIONS:
+        return {"file": label, "findings": [], "summary": "Not a scannable source file."}
+    try:
+        content = p.read_text(encoding="utf-8", errors="ignore")
+    except OSError as e:
+        return {"error": str(e)}
+    findings = scan_text(content, p.suffix == ".py", label)
+    return {
+        "file": label,
+        "findings": findings,
+        "summary": f"{len(findings)} finding(s) in {label}.",
+    }
+
+
 def scan_security_patterns(project_path: str) -> dict:
     """
     Scan source files for security patterns AI assistants commonly introduce.
@@ -252,25 +301,10 @@ def scan_security_patterns(project_path: str) -> dict:
             continue
 
         files_scanned += 1
-        is_python = file_path.suffix == ".py"
-
-        # Track triple-quoted string state across lines (Python docstrings /
-        # multi-line strings): a line that *starts* inside one is prose, not code.
-        in_triple = False
-        for line_no, line in enumerate(content.splitlines(), start=1):
-            line_starts_in_triple = in_triple
-            if is_python:
-                in_triple = (in_triple + line.count('"""') + line.count("'''")) % 2 == 1
-            if line_starts_in_triple:
-                continue
-            for finding in _check_line(line, is_python):
-                finding["file"] = str(rel)
-                finding["line"] = line_no
-                findings.append(finding)
-                if len(findings) >= _MAX_FINDINGS:
-                    truncated = True
-                    break
-            if truncated:
+        for finding in scan_text(content, file_path.suffix == ".py", str(rel)):
+            findings.append(finding)
+            if len(findings) >= _MAX_FINDINGS:
+                truncated = True
                 break
         if truncated:
             break

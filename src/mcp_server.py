@@ -66,8 +66,11 @@ def _strip_reasoning(obj):
 
 
 def _is_writable(action: dict) -> bool:
-    """An action produces a file write only if it isn't an 'improve' note and it
-    carries content. Mirrors executor.run's skip logic."""
+    """An action changes the project if it's a code remediation (targeted in-place
+    edit, no `content`) or a file write (has `content` and isn't an 'improve' note).
+    Mirrors executor.run's apply logic."""
+    if action.get("action") == "remediate":
+        return True
     return action.get("action") != "improve" and action.get("content") is not None
 
 
@@ -217,7 +220,10 @@ async def apply_fixes(project_path: str, ctx: Context, mode: str = "auto") -> di
         rank = a.get("rank")
         field_name = f"fix_{rank}"
         field_to_rank[field_name] = rank
-        default_checked = a.get("priority") == "high"
+        # Code edits (remediate) always default UNCHECKED — editing source is a
+        # higher-trust action than writing a new config file. Config fixes keep the
+        # high-priority default.
+        default_checked = a.get("priority") == "high" and a.get("action") != "remediate"
         fields[field_name] = (
             bool,
             Field(default=default_checked, title=_action_label(a)),

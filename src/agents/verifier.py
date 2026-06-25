@@ -119,14 +119,40 @@ def run(input: dict) -> dict:
     action_plan = input.get("action_plan", {})
 
     executed = execution_result.get("executed", [])
-    actions_by_file = {
-        a.get("file"): a
-        for a in action_plan.get("actions", [])
+    actions = action_plan.get("actions", [])
+    actions_by_file = {a.get("file"): a for a in actions}
+    # Remediations can target several lines in one file, so key them by (file, line).
+    remediation_by_loc = {
+        (a.get("file"), a.get("line")): a
+        for a in actions if a.get("action") == "remediate"
     }
 
     verification_results: list[dict] = []
     for item in executed:
         file_path = item.get("file", "")
+
+        # Code remediation: verify by re-scanning the single file and confirming the
+        # specific finding is gone at the edited line — not a section check.
+        if item.get("status") == "remediated":
+            from src.tools.security_scan import scan_file
+            action = remediation_by_loc.get((file_path, item.get("line")), {})
+            ftype = action.get("finding_type")
+            scan = scan_file(str(Path(project_path) / file_path))
+            remaining = [
+                f for f in scan.get("findings", [])
+                if f.get("type") == ftype and f.get("line") == item.get("line")
+            ]
+            verified = "error" not in scan and not remaining
+            verification_results.append({
+                "file": file_path,
+                "verified": verified,
+                "missing_sections": [],
+                "quality_concerns": [] if verified else [f"{ftype} still present after fix"],
+                "size_bytes": 0,
+                "status": "pass" if verified else "fail",
+            })
+            continue
+
         action = actions_by_file.get(file_path, {})
         expected_sections = action.get("expected_sections", [])
 

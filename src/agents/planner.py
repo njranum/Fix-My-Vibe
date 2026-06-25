@@ -420,6 +420,90 @@ def _generate_security_md(scan_result: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _build_remediation_actions(scan_result: dict, start_rank: int) -> tuple[list[dict], int]:
+    """Build VERIFIED Tier-A code-remediation actions from code findings.
+
+    For each deterministically-fixable finding (Python only in v1): re-read the real
+    source line (never trust the lossy/truncated scanner snippet), propose an
+    idiom-guarded fix, and PROVE in memory that the patched file parses, clears the
+    finding, and introduces nothing new. Only verified fixes become actions; the rest
+    stay in SECURITY.md. Pure planning — never writes.
+    """
+    from src.tools import code_fixes
+    from src.tools import remediation as rem
+
+    project_path = scan_result.get("project_path", "")
+    findings = scan_result.get("code_security_findings", [])
+    actions: list[dict] = []
+    rank = start_rank
+    file_cache: dict[str, str | None] = {}
+
+    for finding in findings:
+        ftype = finding.get("type")
+        if ftype not in code_fixes.DETERMINISTIC_TYPES:
+            continue
+        rel = finding.get("file", "")
+        if not rel.endswith(".py"):          # v1: Python only (JS/TS report-only)
+            continue
+        line_no = finding.get("line")
+        if not line_no:
+            continue
+
+        if rel not in file_cache:
+            try:
+                file_cache[rel] = (Path(project_path) / rel).read_text(encoding="utf-8")
+            except OSError:
+                file_cache[rel] = None
+        text = file_cache[rel]
+        if text is None:
+            continue
+
+        lines = text.splitlines()
+        if line_no > len(lines):
+            continue
+        actual_line = lines[line_no - 1]
+
+        proposal = code_fixes.propose_fix(ftype, actual_line)
+        if proposal is None:
+            continue
+        proposed_line, rationale = proposal
+
+        try:
+            patched = rem.replace_line(text, line_no, actual_line, proposed_line)
+        except ValueError:
+            continue
+        verdict = rem.verify_patch(text, patched, ftype, is_python=True, file_label=rel)
+        if not verdict.get("ok"):
+            continue
+
+        actions.append({
+            "rank": rank,
+            "tool": "security",
+            "action": "remediate",
+            "file": rel,
+            "line": line_no,
+            "finding_type": ftype,
+            "severity": finding.get("severity", "medium"),
+            "tier": "deterministic",
+            "expected_line": actual_line,
+            "proposed_line": proposed_line,
+            "patch": rem.make_unified_diff(text, patched, rel),
+            "rationale": rationale,
+            "kb_citations": [],
+            "requires_followup": None,
+            "confidence": "high",
+            "verification": verdict,
+            "priority": "high" if finding.get("severity") == "high" else "medium",
+            "content": None,
+            "expected_sections": [],
+            "estimated_tokens": 0,
+            "reason": f"{ftype} at {rel}:{line_no} — verified deterministic fix available",
+        })
+        rank += 1
+
+    return actions, rank
+
+
 def run(input: dict) -> dict:
     """
     Standalone interface: run planner without Foundry (pure local reasoning).
@@ -523,6 +607,11 @@ def run(input: dict) -> dict:
             "estimated_tokens": len(content) // 4,
         })
         rank += 1
+
+    # Code-level remediations (Tier A) — verified in-place fix proposals. Additive to
+    # SECURITY.md (which still documents every finding); each is confirmed at the diff gate.
+    remediation_actions, rank = _build_remediation_actions(scan_result, rank)
+    actions.extend(remediation_actions)
 
     # Missing config files
     for tool, config_file in missing_configs.items():
