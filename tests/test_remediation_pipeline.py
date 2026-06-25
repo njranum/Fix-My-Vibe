@@ -101,6 +101,61 @@ def test_fixed_code_still_parses(project):
     assert "debug=False" in patched
 
 
+def test_multiple_fixes_same_file_all_apply(tmp_path):
+    """Regression: two fixes in one file where the first inserts an import (shifting
+    later line numbers) must BOTH apply — the applier relocates by content, not by a
+    stale line number. (This is the bug the live e2e caught.)"""
+    from src.agents import executor
+
+    f = tmp_path / "app.py"
+    f.write_text(
+        '"""App."""\n'
+        'import sqlite3\n'
+        'KEY = "sk-FAKEFIXTUREaaaaaaaaaaaa"\n'
+        'PW = "hunter2hunter2hunter2"\n'
+    )
+    # Two remediations: the first adds `import os` (shifts line numbers), the second
+    # targets a line whose number is now stale.
+    plan = {"actions": [
+        {"rank": 1, "action": "remediate", "file": "app.py", "line": 3,
+         "finding_type": "hardcoded_secret",
+         "expected_line": 'KEY = "sk-FAKEFIXTUREaaaaaaaaaaaa"',
+         "proposed_line": 'KEY = os.environ["KEY"]', "add_imports": ["os"]},
+        {"rank": 2, "action": "remediate", "file": "app.py", "line": 4,
+         "finding_type": "hardcoded_secret",
+         "expected_line": 'PW = "hunter2hunter2hunter2"',
+         "proposed_line": 'PW = os.environ["PW"]', "add_imports": ["os"]},
+    ]}
+    ex = executor.run({"project_path": str(tmp_path), "action_plan": plan},
+                      confirm_fn=lambda _p: [1, 2])
+
+    assert not ex["errors"], ex["errors"]
+    assert len([e for e in ex["executed"] if e["status"] == "remediated"]) == 2
+    out = f.read_text()
+    assert 'os.environ["KEY"]' in out and 'os.environ["PW"]' in out
+    assert out.count("import os") == 1  # import added once, not duplicated
+    compile(out, "app.py", "exec")
+
+
+def test_foundry_augment_adds_tier_a_even_if_remediator_fails(project):
+    """The Foundry plan augmentation must add deterministic Tier-A fixes and tolerate
+    a remediator failure (no client) without losing the rest of the plan."""
+    from src.orchestrator import _augment_with_remediations
+
+    scan = scanner.run({"project_path": str(project)})
+    plan = {"actions": [{"rank": 1, "action": "create", "file": "SECURITY.md",
+                         "content": "x", "priority": "high"}]}
+    # object() is not a real Foundry client → remediator.run_with_foundry raises,
+    # which _augment must swallow.
+    _augment_with_remediations(plan, scan, client=object())
+
+    rem = [a for a in plan["actions"] if a.get("action") == "remediate"]
+    types = {a["finding_type"] for a in rem}
+    assert types == {"tls_verification_disabled", "debug_enabled"}  # Tier A landed
+    # Ranks stay sequential 1..N after augmentation.
+    assert [a["rank"] for a in plan["actions"]] == list(range(1, len(plan["actions"]) + 1))
+
+
 def test_fixed_fixture_tests_still_pass(project):
     """Behavior preservation: the fixture's own test suite must still pass after the
     fix. Skipped if FastAPI isn't installed (the fixture imports it)."""

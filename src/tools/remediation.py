@@ -16,12 +16,118 @@ executor) is the final decision. See docs/code-remediation-plan.md §4.
 """
 
 import re
+import ast
 import shutil
 import difflib
+import builtins
 from pathlib import Path
 
 from src.tools.security_scan import scan_text
 from src.tools.fs_tools import _is_safe_path
+
+
+# --------------------------------------------------------------------------- #
+# Undefined-name guard + import insertion
+#
+# verify_patch's compile() check proves a patch is syntactically valid, but NOT
+# that it runs: `os.environ[...]` compiles fine in a file with no `import os`,
+# then NameErrors at import time. So we (a) detect names a patch newly leaves
+# unresolved (the guard), and (b) add the missing stdlib import so the fix is
+# complete. Only a safe allowlist of stdlib modules is ever auto-imported.
+# --------------------------------------------------------------------------- #
+
+_SAFE_STDLIB = frozenset({
+    "os", "sys", "ast", "re", "json", "shlex", "subprocess", "secrets",
+    "hashlib", "hmac", "base64", "pathlib", "logging", "tempfile", "uuid",
+    "datetime", "math", "html",
+})
+
+
+def _bound_names(tree: ast.AST) -> set[str]:
+    """Names bound somewhere in the module: imports, defs, classes, assignments,
+    args, for/with targets, comprehensions, globals. Plus builtins."""
+    names: set[str] = set(dir(builtins))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                names.add((a.asname or a.name).split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            for a in node.names:
+                names.add(a.asname or a.name)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Global, ast.Nonlocal)):
+            names.update(node.names)
+        elif isinstance(node, ast.arg):
+            names.add(node.arg)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+            names.add(node.id)
+    return names
+
+
+def _unresolved_names(text: str) -> set[str]:
+    """Names used (loaded) but not bound anywhere in `text`. Empty on syntax error."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return set()
+    bound = _bound_names(tree)
+    used = {n.id for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    return used - bound
+
+
+def undefined_introduced(original_text: str, patched_text: str) -> set[str]:
+    """Names that the patch leaves unresolved that the original did NOT — i.e. the
+    edit references something (e.g. `os`) that isn't imported/defined."""
+    return _unresolved_names(patched_text) - _unresolved_names(original_text)
+
+
+def detect_needed_imports(original_text: str, proposed: str) -> list[str]:
+    """Safe-stdlib module roots referenced in `proposed` that aren't already
+    available in the file (so the fix needs them imported). Conservative: only the
+    allowlist, only `<mod>.` attribute access."""
+    try:
+        bound = _bound_names(ast.parse(original_text))
+    except SyntaxError:
+        bound = set(dir(builtins))
+    roots = set(re.findall(r"\b([a-z_][a-z0-9_]*)\s*\.", proposed))
+    return sorted(m for m in roots if m in _SAFE_STDLIB and m not in bound)
+
+
+def ensure_imports(text: str, modules) -> str:
+    """Insert `import <m>` for each module not already imported, after the module
+    docstring. Idempotent."""
+    if not modules:
+        return text
+    try:
+        bound = _bound_names(ast.parse(text))
+    except SyntaxError:
+        bound = set()
+    to_add = [m for m in modules if m not in bound]
+    if not to_add:
+        return text
+    lines = text.splitlines(keepends=True)
+    insert_at = 0
+    try:
+        tree = ast.parse(text)
+        if (tree.body and isinstance(tree.body[0], ast.Expr)
+                and isinstance(tree.body[0].value, ast.Constant)
+                and isinstance(tree.body[0].value.value, str)):
+            insert_at = tree.body[0].end_lineno  # after the docstring
+    except SyntaxError:
+        pass
+    block = "".join(f"import {m}\n" for m in to_add)
+    lines.insert(insert_at, block)
+    return "".join(lines)
+
+
+def build_patched(text: str, start_line: int, expected: str, proposed: str,
+                  add_imports=()) -> str:
+    """The canonical candidate-construction used by BOTH verification and apply, so
+    what we prove is exactly what we write: replace the block, then add any imports."""
+    patched = replace_block(text, start_line, expected, proposed)
+    return ensure_imports(patched, add_imports) if add_imports else patched
 
 
 # --------------------------------------------------------------------------- #
@@ -46,25 +152,59 @@ def _finding_key(finding: dict) -> tuple[str, str]:
 # Pure text transforms (no I/O) — used to build candidates and to verify
 # --------------------------------------------------------------------------- #
 
-def replace_line(text: str, line_no: int, expected_line: str, proposed_line: str) -> str:
-    """Return `text` with line `line_no` (1-based) replaced by `proposed_line`.
+def replace_block(text: str, start_line: int, expected: str, proposed: str) -> str:
+    """Return `text` with the block beginning at `start_line` (1-based, spanning as
+    many lines as `expected` has) replaced by `proposed`. `expected`/`proposed` may be
+    single- or multi-line (a Tier-B fix can add an `import`).
 
-    Raises ValueError if the line is out of range or its current content doesn't
-    match `expected_line` (compared ignoring trailing whitespace) — that mismatch
-    means the file drifted since planning, so we refuse rather than edit blind.
+    Raises ValueError if out of range or the current block doesn't match `expected`
+    (per-line, ignoring trailing whitespace) — a mismatch means the file drifted
+    since planning, so we refuse rather than edit blind.
     """
     lines = text.splitlines(keepends=True)
-    if line_no < 1 or line_no > len(lines):
-        raise ValueError(f"line {line_no} out of range (file has {len(lines)} lines)")
-    current = lines[line_no - 1]
-    newline = "\n" if current.endswith("\n") else ""
-    if current.rstrip() != expected_line.rstrip():
+    expected_lines = expected.split("\n")
+    n = len(expected_lines)
+    if start_line < 1 or start_line + n - 1 > len(lines):
         raise ValueError(
-            f"line {line_no} changed since planning — refusing edit "
-            f"(expected {expected_line.rstrip()!r}, found {current.rstrip()!r})"
+            f"block at line {start_line} (+{n}) out of range (file has {len(lines)} lines)"
         )
-    lines[line_no - 1] = proposed_line.rstrip("\n") + newline
-    return "".join(lines)
+    current_slice = lines[start_line - 1: start_line - 1 + n]
+    current_norm = [ln.rstrip("\n").rstrip() for ln in current_slice]
+    if current_norm != [ln.rstrip() for ln in expected_lines]:
+        raise ValueError(
+            f"block at line {start_line} changed since planning — refusing edit "
+            f"(expected {expected_lines!r}, found {current_norm!r})"
+        )
+    trailing = "\n" if current_slice and current_slice[-1].endswith("\n") else ""
+    new_block = "\n".join(proposed.split("\n")) + trailing
+    new_lines = lines[: start_line - 1] + [new_block] + lines[start_line - 1 + n:]
+    return "".join(new_lines)
+
+
+def replace_line(text: str, line_no: int, expected_line: str, proposed_line: str) -> str:
+    """Single-line convenience wrapper over replace_block (Tier-A fixes)."""
+    return replace_block(text, line_no, expected_line.rstrip("\n"), proposed_line.rstrip("\n"))
+
+
+def locate_block(text: str, expected: str, hint_line: int | None = None) -> int | None:
+    """Find the 1-based start line of `expected` (per-line, ignoring trailing
+    whitespace) in `text`. Robust to line drift from earlier same-file edits.
+
+    Returns the unique match; if several, the one nearest `hint_line`; None if the
+    content isn't present (e.g. already fixed). This is why batched fixes to one file
+    work: each edit relocates its block by content instead of trusting a line number
+    that an earlier insertion (e.g. `import os`) has shifted.
+    """
+    lines = text.splitlines()
+    exp = [ln.rstrip() for ln in expected.split("\n")]
+    n = len(exp)
+    matches = [i + 1 for i in range(len(lines) - n + 1)
+               if [ln.rstrip() for ln in lines[i:i + n]] == exp]
+    if not matches:
+        return None
+    if len(matches) == 1 or hint_line is None:
+        return matches[0]
+    return min(matches, key=lambda m: abs(m - hint_line))
 
 
 def make_unified_diff(original: str, patched: str, file_label: str) -> str:
@@ -116,11 +256,15 @@ def verify_patch(
     before_keys = {_finding_key(f) for f in before}
     no_new_findings = not any(_finding_key(f) not in before_keys for f in after)
 
-    ok = bool(file_parses and finding_cleared and no_new_findings)
+    # Compiles but would NameError at runtime? (e.g. `os.environ` with no import os)
+    no_undefined_names = not undefined_introduced(original_text, patched_text)
+
+    ok = bool(file_parses and finding_cleared and no_new_findings and no_undefined_names)
     return {
         "file_parses": file_parses,
         "finding_cleared": finding_cleared,
         "no_new_findings": no_new_findings,
+        "no_undefined_names": no_undefined_names,
         "ok": ok,
     }
 
@@ -151,16 +295,18 @@ def versioned_backup(target: Path) -> Path:
 def apply_code_fix(
     project_path: str,
     relative_path: str,
-    line_no: int,
-    expected_line: str,
-    proposed_line: str,
+    start_line: int,
+    expected: str,
+    proposed: str,
+    add_imports=(),
 ) -> dict:
-    """Apply a single confirmed line edit. Re-reads the line, content-checks it,
-    backs up (versioned), then writes. Returns {written, backed_up, backup_path,
-    line} or {error}.
+    """Apply a single confirmed edit (one line or a multi-line block), plus any
+    imports the fix needs. Re-reads the target block, content-checks it against
+    `expected`, backs up (versioned), then writes. Returns {written, backed_up,
+    backup_path, line} or {error}.
 
-    Confirmation and pre-apply verification must already have happened upstream;
-    this is the low-level writer the executor delegates to.
+    Uses the same `build_patched` as verification, so what was proven safe is exactly
+    what gets written. Confirmation and pre-apply verification happen upstream.
     """
     base = Path(project_path).resolve()
     target = base / relative_path
@@ -174,8 +320,16 @@ def apply_code_fix(
     except OSError as e:
         return {"error": str(e)}
 
+    # Relocate by content: earlier edits to this file (esp. inserted imports) may
+    # have shifted line numbers since planning, so trust the expected content, not
+    # the stale line number.
+    located = locate_block(original, expected.rstrip("\n"), hint_line=start_line)
+    if located is None:
+        return {"error": f"expected block not found in {relative_path} (already changed?)"}
+
     try:
-        patched = replace_line(original, line_no, expected_line, proposed_line)
+        patched = build_patched(original, located, expected.rstrip("\n"),
+                                proposed.rstrip("\n"), add_imports)
     except ValueError as e:
         return {"error": str(e)}
 
@@ -185,7 +339,7 @@ def apply_code_fix(
         "written": str(target),
         "backed_up": True,
         "backup_path": str(backup),
-        "line": line_no,
+        "line": located,
     }
 
 

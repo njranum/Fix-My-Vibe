@@ -240,7 +240,7 @@ only model under which we can assert "the right query was built" in tests.
 |-------|-------------|--------|
 | **0 — Prerequisites** | `scan_file` refactor, executor/`_is_writable` skip-logic fix, remediation skeletons. (`kb_search` extraction deferred to Phase 2.) | ✅ **Done** |
 | **1 — Tier A, offline** | `code_fixes.py` (idiom-guarded) + `remediation.py` harness + planner/executor/verifier wiring + diff display at the confirm gate + full offline test suite (34 new tests). Restores real code-fixing with zero Azure. | ✅ **Done** |
-| **2 — Tier B/C, Foundry** | `kb_search` extraction + `remediator.py` (batched, direct `kb_search`) + capture script + contract tests + opt-in live-IQ tests. | ⏸ Next (check-in first) |
+| **2 — Tier B/C, Foundry** | `kb_search` extraction + `remediator.py` (batched, direct `kb_search`) + capture script + contract tests + opt-in live-IQ tests + Foundry plan wiring. | ✅ **Done** (offline-verified; live LLM/Azure path needs creds) |
 | **3 — UX & rollback** | Richer CLI diffs, opt-in sandboxed post-apply test run (`--run-tests`) + rollback UX. (Basic diff display + rollback fn already in.) | ⏸ |
 | **4 — Docs & demo** | README (honest two-tier framing) + demo assets (the new "it fixes the code" moment). | ⏸ |
 
@@ -251,6 +251,47 @@ only model under which we can assert "the right query was built" in tests.
 - `planner._build_remediation_actions` — emits only verified Tier-A `remediate` actions; SECURITY.md still lists every finding.
 - `executor` handles `remediate` (delegates to `apply_code_fix`); `verifier` confirms via `scan_file`; `mcp_server` surfaces code fixes default-UNCHECKED.
 - Verified e2e on `vulnerable-project`: `verify=False→True` + `debug=True→False` applied, findings cleared, **fixture's own pytest still green** (behavior preserved); Tier B/C correctly untouched.
+
+### Phase 2 — as built
+- `researcher.kb_search()` / `web_search()` — extracted to module level (was a closure);
+  `_make_tool_handlers` now wraps them, so the Foundry tool loop is unchanged.
+- `remediation.replace_block` — multi-line block edits (a Tier-B fix can add an import);
+  `replace_line`/`apply_code_fix` now build on it (single-line == block-of-1).
+- `agents/remediator.py` — pure/agent seam: `build_kb_query`, `fetch_kb_context`
+  (one query per type, injectable for tests), `parse_patches`, `verify_and_build_actions`
+  (every patch re-verified by `verify_patch`; Tier-C always gets a rotation follow-up;
+  citations attached as a soft signal), and one **batched** `run_with_foundry` (direct
+  KB call → single LLM run, not per-finding).
+- `orchestrator._augment_with_remediations` — Foundry plan gets Tier A (deterministic)
+  + Tier B/C (LLM); defensive (remediator failure → Tier-B/C stay in SECURITY.md);
+  re-normalizes ranks.
+- Tests: contract tests replay **recorded patches** (good/broken/stale) through the real
+  harness — Tier-B/C offline coverage without an LLM; live-IQ tests gated by `skipif` on
+  `AZURE_SEARCH_*` (4 skip cleanly in CI). `scripts/capture_kb_responses.py` + synthetic
+  `tests/fixtures/kb_responses/*.json` (regenerate against the live index before relying
+  on real citations).
+- **Not exercised without credentials:** live Azure AI Search query + live LLM patch
+  generation (the opt-in path). The generate→verify *contract* is covered offline.
+
+### Live e2e validation (2026-06-25, real Azure/Foundry)
+Ran the full Foundry chain (scan→research→plan→remediate→apply→verify) on a copy of
+`vulnerable-project`. **Final result: 7/7 remediations applied, 0 errors, ALL code
+findings cleared, fixture's own tests PASS.** Getting there surfaced 5 bugs that only
+appear in the live full pipeline — all fixed + regression-tested:
+1. `foundry_utils.get_last_assistant_message*` crashed on an empty assistant turn
+   (`content[0]` IndexError) → skip empty turns (`_message_text`).
+2. Foundry scan results are LLM-round-tripped and lose exact file/line → remediation
+   couldn't locate code. Fix: re-derive code findings deterministically in
+   `_augment_with_remediations` (D8 — findings are facts, not model output).
+3. `executor.run_with_foundry` dropped `remediate` actions (content-is-None filter +
+   LLM-write model). Fix: remediations apply+verify **deterministically in every mode**
+   (`_apply_remediations_deterministically`); the LLM executor only writes configs.
+4. Fixes that need an import compiled but NameError'd at runtime (`os.environ` with no
+   `import os`). Fix: undefined-name guard in `verify_patch` + auto `ensure_imports`
+   (safe stdlib allowlist), replayed at apply time via `add_imports`.
+5. Multiple fixes in one file: an inserted import shifted later line numbers, so the
+   content-drift guard refused them. Fix: `apply_code_fix` relocates the block by
+   **content** (`locate_block`), not a stale line number.
 
 Phase 1 alone restores real (deterministic, idiom-guarded, human-confirmed) code
 fixing, fully offline and CI-tested — a safe, self-contained first milestone.

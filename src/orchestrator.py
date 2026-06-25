@@ -59,6 +59,7 @@ def run_plan_phase(project_path: str, mode: str = "auto", verbose: bool = False)
         plan_result = planner.run_with_foundry(client, scan_result, research_result)
         if verbose:
             _print_reasoning_trace(plan_result, "Planner")
+        _augment_with_remediations(plan_result, scan_result, client)
     else:
         scan_result = scanner.run({"project_path": str(path)})
         if verbose:
@@ -78,6 +79,42 @@ def run_plan_phase(project_path: str, mode: str = "auto", verbose: bool = False)
         "research_result": research_result,
         "plan_result": plan_result,
     }
+
+
+def _augment_with_remediations(plan_result: dict, scan_result: dict, client) -> None:
+    """Append code-remediation actions to a Foundry plan: Tier-A deterministic
+    (mode-independent) + Tier-B/C KB-grounded (LLM). Re-normalizes ranks so the
+    elicitation checkboxes stay 1..N. Defensive: a remediator failure logs and
+    leaves the plan otherwise intact (config fixes + SECURITY.md still stand).
+
+    Local mode already adds Tier A inside planner.run, so this is Foundry-only.
+    """
+    from src.agents import planner, remediator
+    from src.tools.security_scan import scan_security_patterns
+
+    actions = plan_result.setdefault("actions", [])
+    next_rank = len(actions) + 1
+
+    # Code findings are DETERMINISTIC facts (D8): in Foundry mode scan_result has been
+    # round-tripped through the LLM, which doesn't reliably preserve exact file/line —
+    # and remediation needs those to locate the code. Re-derive from the scanner so
+    # both tiers work off ground truth, not the model's paraphrase.
+    project_path = scan_result.get("project_path", "")
+    if project_path:
+        det = scan_security_patterns(project_path)
+        if "findings" in det:
+            scan_result = {**scan_result, "code_security_findings": det["findings"]}
+
+    tier_a, next_rank = planner._build_remediation_actions(scan_result, next_rank)
+    actions.extend(tier_a)
+
+    try:
+        tier_bc, next_rank = remediator.run_with_foundry(client, scan_result, next_rank)
+        actions.extend(tier_bc)
+    except Exception as e:
+        print(f"  Remediator unavailable ({e}) — Tier-B/C findings remain in SECURITY.md")
+
+    planner._normalize_ranks(plan_result)
 
 
 def run_apply_phase(
@@ -107,8 +144,18 @@ def run_apply_phase(
             resolved = "local"
 
     if resolved == "foundry":
+        # Remediations are deterministic, safety-gated line edits — apply + verify
+        # them via the local harness in EVERY mode. The Foundry executor (LLM-driven
+        # write_file) only handles config-file writes; it can't do apply_code_fix and
+        # would otherwise silently drop content-less remediate actions.
+        remediate_ranks = [
+            a["rank"] for a in plan_result.get("actions", [])
+            if a.get("action") == "remediate" and a.get("rank") in confirmed_ranks
+        ]
+        config_ranks = [r for r in confirmed_ranks if r not in remediate_ranks]
+
         execution_result = executor.run_with_foundry(
-            client, str(path), plan_result, confirmed_ranks
+            client, str(path), plan_result, config_ranks
         )
         if verbose:
             _print_reasoning_trace(execution_result, "Executor")
@@ -117,6 +164,11 @@ def run_apply_phase(
         )
         if verbose:
             _print_reasoning_trace(verify_result, "Verifier")
+
+        if remediate_ranks:
+            _apply_remediations_deterministically(
+                str(path), plan_result, remediate_ranks, execution_result, verify_result
+            )
     else:
         execution_result = executor.run(
             {"project_path": str(path), "action_plan": plan_result},
@@ -132,6 +184,42 @@ def run_apply_phase(
         "execution_result": execution_result,
         "verify_result": verify_result,
     }
+
+
+def _apply_remediations_deterministically(
+    path: str, plan_result: dict, ranks: list[int],
+    execution_result: dict, verify_result: dict,
+) -> None:
+    """Apply + verify the remediate actions in `ranks` via the local deterministic
+    harness, merging results into the (Foundry) execution_result / verify_result in
+    place. Reuses the same code-fix + scan_file verification the local path uses, so
+    remediation behaves identically regardless of mode.
+    """
+    from src.agents import executor, verifier
+
+    rem_exec = executor.run(
+        {"project_path": path, "action_plan": plan_result},
+        confirm_fn=lambda _plan: ranks,
+    )
+    rem_verify = verifier.run({
+        "project_path": path,
+        "execution_result": rem_exec,
+        "action_plan": plan_result,
+    })
+
+    execution_result.setdefault("executed", []).extend(rem_exec.get("executed", []))
+    execution_result.setdefault("errors", []).extend(rem_exec.get("errors", []))
+    written = len(execution_result["executed"])
+    errs = len(execution_result["errors"])
+    execution_result["summary"] = f"{written} change(s) applied. {errs} error(s)."
+
+    vresults = verify_result.setdefault("verification_results", [])
+    vresults.extend(rem_verify.get("verification_results", []))
+    verify_result.setdefault("recommendations", []).extend(rem_verify.get("recommendations", []))
+    passed = sum(1 for r in vresults if r.get("status") == "pass")
+    total = len(vresults)
+    verify_result["overall_pass"] = passed == total and total > 0
+    verify_result["summary"] = f"{passed}/{total} checks passed."
 
 
 def run_local(project_path: str, confirm_fn=None, verbose: bool = False) -> dict:

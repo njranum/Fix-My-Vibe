@@ -86,6 +86,72 @@ def test_verify_patch_non_python_is_report_only():
     assert v["file_parses"] is None
 
 
+# --- undefined-name guard + import insertion -----------------------------------
+
+def test_undefined_introduced_flags_missing_import():
+    original = 'X = "literal"\n'
+    patched = 'X = os.environ["X"]\n'  # uses os, never imported
+    assert rem.undefined_introduced(original, patched) == {"os"}
+
+
+def test_undefined_introduced_clean_when_imported():
+    original = 'X = "literal"\n'
+    patched = 'import os\nX = os.environ["X"]\n'
+    assert rem.undefined_introduced(original, patched) == set()
+
+
+def test_detect_needed_imports():
+    text = 'import sqlite3\nX = "y"\n'
+    assert rem.detect_needed_imports(text, 'X = os.environ["X"]') == ["os"]
+    # already imported → nothing needed
+    assert rem.detect_needed_imports("import os\n", 'X = os.environ["X"]') == []
+    # non-allowlisted module is never auto-imported
+    assert rem.detect_needed_imports(text, "X = django.conf.settings") == []
+
+
+def test_ensure_imports_after_docstring_and_idempotent():
+    text = '"""Doc."""\nimport sqlite3\nX = 1\n'
+    out = rem.ensure_imports(text, ["os"])
+    assert out.splitlines()[:3] == ['"""Doc."""', "import os", "import sqlite3"]
+    # idempotent — already present
+    assert rem.ensure_imports(out, ["os"]) == out
+
+
+def test_verify_patch_rejects_undefined_name():
+    original = 'API_KEY = "sk-FAKEFIXTUREfixturefixture"\n'
+    patched = 'API_KEY = os.environ["API_KEY"]\n'  # compiles, but os undefined
+    v = rem.verify_patch(original, patched, "hardcoded_secret", is_python=True)
+    assert v["file_parses"] is True          # it DOES compile...
+    assert v["no_undefined_names"] is False  # ...but would NameError at runtime
+    assert v["ok"] is False
+
+
+def test_build_patched_with_import_passes_guard():
+    original = 'API_KEY = "sk-FAKEFIXTUREfixturefixture"\n'
+    proposed = 'API_KEY = os.environ["API_KEY"]'
+    needed = rem.detect_needed_imports(original, proposed)
+    patched = rem.build_patched(original, 1, 'API_KEY = "sk-FAKEFIXTUREfixturefixture"',
+                                proposed, needed)
+    v = rem.verify_patch(original, patched, "hardcoded_secret", is_python=True)
+    assert needed == ["os"]
+    assert v["ok"] is True
+
+
+def test_apply_code_fix_adds_import(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('import sqlite3\nKEY = "sk-FAKEFIXTUREfixturefixture"\n')
+    result = rem.apply_code_fix(
+        str(tmp_path), "app.py", 2,
+        'KEY = "sk-FAKEFIXTUREfixturefixture"',
+        'KEY = os.environ["KEY"]',
+        add_imports=["os"],
+    )
+    assert "error" not in result
+    out = f.read_text()
+    assert "import os" in out and 'os.environ["KEY"]' in out
+    compile(out, "app.py", "exec")  # and it's valid
+
+
 # --- apply_code_fix (on disk) --------------------------------------------------
 
 def _src(tmp_path):

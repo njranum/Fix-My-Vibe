@@ -127,70 +127,80 @@ def _get_tool_definitions(has_azure_search: bool = False) -> list[dict]:
     return tools
 
 
+def kb_search(query: str, stack_filter: str | None = None,
+              threat_filter: str | None = None, top: int = 5) -> dict:
+    """Query the Azure AI Search security KB. Module-level so the Researcher agent,
+    the Remediator, and the capture script can all reuse it (it was previously a
+    closure that only the Foundry tool loop could reach).
+
+    Returns {"results": [...], "source"|"error"}. Each result: title, url, content
+    (≤800 chars), threats, stacks.
+    """
+    from azure.search.documents import SearchClient
+    from azure.core.credentials import AzureKeyCredential
+
+    print(f"  [KB] kb_search query={query!r} stack={stack_filter} threat={threat_filter}", flush=True)
+
+    endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT")
+    key = os.environ.get("AZURE_SEARCH_KEY")
+    index_name = os.environ.get("AZURE_SEARCH_INDEX", "fix-my-vibe-security-kb")
+
+    if not endpoint or not key:
+        return {"results": [], "error": "Azure AI Search not configured"}
+
+    client = SearchClient(
+        endpoint=endpoint,
+        index_name=index_name,
+        credential=AzureKeyCredential(key),
+    )
+
+    # Fold stack/threat hints into the query text — the index fields are not
+    # marked filterable so OData filter expressions are unavailable.
+    enriched_query = " ".join(filter(None, [query, stack_filter, threat_filter]))
+
+    results = client.search(
+        search_text=enriched_query,
+        search_mode="any",
+        select=["content", "source_url", "source_title", "threat_categories", "stack_applicable_to"],
+        top=top,
+    )
+
+    formatted = []
+    for r in results:
+        formatted.append({
+            "title": r.get("source_title", ""),
+            "url": r.get("source_url", ""),
+            "content": r.get("content", "")[:800],
+            "threats": r.get("threat_categories", []),
+            "stacks": r.get("stack_applicable_to", []),
+        })
+
+    print(f"  [KB] → {len(formatted)} results", flush=True)
+    return {"results": formatted, "source": "azure_ai_search"}
+
+
+def web_search(query: str) -> dict:
+    """Tavily web search. Module-level companion to kb_search (fallback path)."""
+    from tavily import TavilyClient
+    tavily = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
+    response = tavily.search(query=query, max_results=5)
+    return {
+        "results": [
+            {"title": r.get("title", ""), "url": r.get("url", ""), "content": r.get("content", "")}
+            for r in response.get("results", [])
+        ]
+    }
+
+
 def _make_tool_handlers() -> dict:
-    def search_security_kb(args: dict) -> dict:
-        from azure.search.documents import SearchClient
-        from azure.core.credentials import AzureKeyCredential
-
-        print(f"  [KB] search_security_kb query={args['query']!r} stack={args.get('stack_filter')} threat={args.get('threat_filter')}", flush=True)
-
-        endpoint = os.environ.get("AZURE_SEARCH_ENDPOINT")
-        key = os.environ.get("AZURE_SEARCH_KEY")
-        index_name = os.environ.get("AZURE_SEARCH_INDEX", "fix-my-vibe-security-kb")
-
-        if not endpoint or not key:
-            return {"results": [], "error": "Azure AI Search not configured"}
-
-        client = SearchClient(
-            endpoint=endpoint,
-            index_name=index_name,
-            credential=AzureKeyCredential(key),
-        )
-
-        query = args["query"]
-        stack_filter = args.get("stack_filter")
-        threat_filter = args.get("threat_filter")
-
-        # Fold stack/threat hints into the query text — the index fields are not
-        # marked filterable so OData filter expressions are unavailable.
-        enriched_query = " ".join(filter(None, [query, stack_filter, threat_filter]))
-
-        results = client.search(
-            search_text=enriched_query,
-            search_mode="any",
-            select=["content", "source_url", "source_title", "threat_categories", "stack_applicable_to"],
-            top=5,
-        )
-
-        formatted = []
-        for r in results:
-            formatted.append({
-                "title": r.get("source_title", ""),
-                "url": r.get("source_url", ""),
-                "content": r.get("content", "")[:800],
-                "threats": r.get("threat_categories", []),
-                "stacks": r.get("stack_applicable_to", []),
-            })
-
-        print(f"  [KB] → {len(formatted)} results", flush=True)
-        return {"results": formatted, "source": "azure_ai_search"}
-
-    def search_web(args: dict) -> dict:
-        from tavily import TavilyClient
-        tavily = TavilyClient(api_key=os.environ["TAVILY_API_KEY"])
-        response = tavily.search(query=args["query"], max_results=5)
-        return {
-            "results": [
-                {
-                    "title": r.get("title", ""),
-                    "url": r.get("url", ""),
-                    "content": r.get("content", ""),
-                }
-                for r in response.get("results", [])
-            ]
-        }
-
-    return {"search_security_kb": search_security_kb, "search_web": search_web}
+    # Thin adapters so the Foundry tool-calling loop (which passes an args dict)
+    # reuses the same module-level functions everything else calls directly.
+    return {
+        "search_security_kb": lambda args: kb_search(
+            args["query"], args.get("stack_filter"), args.get("threat_filter")
+        ),
+        "search_web": lambda args: web_search(args["query"]),
+    }
 
 
 def run(input: dict) -> dict:

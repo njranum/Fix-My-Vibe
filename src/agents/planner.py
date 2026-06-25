@@ -468,8 +468,9 @@ def _build_remediation_actions(scan_result: dict, start_rank: int) -> tuple[list
             continue
         proposed_line, rationale = proposal
 
+        add_imports = rem.detect_needed_imports(text, proposed_line)
         try:
-            patched = rem.replace_line(text, line_no, actual_line, proposed_line)
+            patched = rem.build_patched(text, line_no, actual_line, proposed_line, add_imports)
         except ValueError:
             continue
         verdict = rem.verify_patch(text, patched, ftype, is_python=True, file_label=rel)
@@ -487,6 +488,7 @@ def _build_remediation_actions(scan_result: dict, start_rank: int) -> tuple[list
             "tier": "deterministic",
             "expected_line": actual_line,
             "proposed_line": proposed_line,
+            "add_imports": add_imports,
             "patch": rem.make_unified_diff(text, patched, rel),
             "rationale": rationale,
             "kb_citations": [],

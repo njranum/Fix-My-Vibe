@@ -122,12 +122,31 @@ def extract_think_block(text: str) -> str:
     return match.group(1).strip() if match else ""
 
 
+def _message_text(msg) -> str:
+    """Safely pull text from a message's content parts, or '' if it has none.
+
+    Assistant turns can carry empty content (e.g. a tool-call-only message), in
+    which case ``msg.content[0]`` raises IndexError. Walk the parts and return the
+    first one that actually has text, so callers can skip empty turns.
+    """
+    try:
+        for part in msg.content:
+            text = getattr(part, "text", None)
+            value = getattr(text, "value", None)
+            if value:
+                return value
+    except (AttributeError, TypeError):
+        pass
+    return ""
+
+
 def get_last_assistant_message(client, thread_id: str) -> str:
     """Extract the last assistant message text from a thread, stripping think blocks."""
     for msg in client.agents.messages.list(thread_id=thread_id):
         if msg.role == "assistant":
-            raw = msg.content[0].text.value
-            return re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+            raw = _message_text(msg)
+            if raw:
+                return re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
     return ""
 
 
@@ -137,10 +156,13 @@ def get_last_assistant_message_with_reasoning(client, thread_id: str) -> tuple[s
     Phi-4-reasoning emits chain-of-thought as plain text before the JSON.
     We return the full raw text (parse_json_response handles extraction) and
     treat everything before the final { as the reasoning trace for --verbose.
+    Empty assistant turns (no text content) are skipped.
     """
     for msg in client.agents.messages.list(thread_id=thread_id):
         if msg.role == "assistant":
-            raw = msg.content[0].text.value
+            raw = _message_text(msg)
+            if not raw:
+                continue
             # Try <think> block first; fall back to text before the last JSON {
             reasoning = extract_think_block(raw)
             if not reasoning:

@@ -237,6 +237,7 @@ def run(input: dict, confirm_fn=None) -> dict:
                 action.get("line"),
                 action.get("expected_line", ""),
                 action.get("proposed_line", ""),
+                action.get("add_imports", ()),
             )
             if "error" in result:
                 errors.append({"rank": rank, "file": file_path, "error": result["error"]})
