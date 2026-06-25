@@ -1,0 +1,65 @@
+[
+  {
+    "title": "Fix My Vibe Internal Security Patterns (kb/security-patterns/)",
+    "url": "local://hackathon/kb/security-patterns/",
+    "content": "# ai-tool-config-hygiene.md\n\n# AI Tool Configuration Hygiene\n\nHow AI coding tool configuration itself becomes a security surface. Part of the\nFix My Vibe knowledge base.\n\n## .env files readable by AI tools\n\n**Pattern:** Cursor, Claude Code, and similar tools index or read project files for\ncontext. A `.env` in the project root flows into the AI context window \u2014 and from there\npotentially into completions, logs, or telemetry.\n\n**Fix:** `.cursorignore` (Cursor) must list `.env`, `.env.*`, `*.pem`, `*.key`,\n`credentials.json`, `secrets/`. Claude Code: add a deny rule for secret paths or keep\nsecrets outside the workspace. And `.gitignore` them regardless.\n\n## Secrets pasted into context files\n\n**Pattern:** Connection strings or tokens written into CLAUDE.md / .cursorrules \"so the\nAI knows the",
+    "threats": [
+      "All 7 categories"
+    ],
+    "stacks": [
+      "python",
+      "fastapi",
+      "javascript",
+      "react"
+    ]
+  },
+  {
+    "title": "OWASP Top 10 2025 - A05 Injection",
+    "url": "https://raw.githubusercontent.com/OWASP/Top10/master/2025/docs/en/A05_2025-Injection.md",
+    "content": "uage (HQL):\n\n```\nQuery HQLQuery = session.createQuery(\"FROM accounts WHERE custID='\" + request.getParameter(\"id\") + \"'\");\n```\n\nAn attacker supplies: `' OR custID IS NOT NULL OR custID='`. This bypasses the filter and returns all accounts. While HQL has fewer dangerous functions than raw SQL, it still allows unauthorized data access when user input is concatenated into queries.\n\n**Scenario #3:** An application passes user input directly to an OS command:\n\n```\nString cmd = \"nslookup \" + request.getParameter(\"domain\");\nRuntime.getRuntime().exec(cmd);\n```\n\nAn attacker supplies `example.com; cat /etc/passwd` to execute arbitrary commands on the server.\n\n## References.\n\n* [OWASP Proactive Controls: Secure Database Access](https://owasp.org/www-project-proactive-controls/v3/en/c3-secure-database)",
+    "threats": [
+      "A05-Injection",
+      "SQL Injection",
+      "Command Injection",
+      "Eval/exec"
+    ],
+    "stacks": [
+      "all"
+    ]
+  },
+  {
+    "title": "CWE-94: Improper Control of Generation of Code (Code Injection)",
+    "url": "https://cwe.mitre.org/data/definitions/94.html",
+    "content": "d off\" the construction of the original function call, in order to prevent parsing errors from causing the malicious eval() to fail before the attacker's payload is activated. This particular manipulation would fail after the system() call, because the \"_key(\\$fname, \\$key, \\$val)\" portion of the string would cause an error, but this is irrelevant to the attack because the payload has already been activated.\nExample 3\nThis simple python3 script asks a user to supply a comma-separated list of numbers as input and adds them together.\n(bad code)\nExample Language:\nPython\ndef main():\nsum = 0\ntry:\nnumbers = eval(input(\"Enter a comma-separated list of numbers: \"))\nexcept SyntaxError:\nprint(\"Error: invalid input\")\nreturn\nfor num in numbers:\nsum = sum + num\nprint(f\"Sum of {numbers} = {sum}\")\nmain()",
+    "threats": [
+      "A03-Injection",
+      "Eval/exec"
+    ],
+    "stacks": [
+      "python",
+      "javascript",
+      "all"
+    ]
+  },
+  {
+    "title": "CWE-89: SQL Injection",
+    "url": "https://cwe.mitre.org/data/definitions/89.html",
+    "content": "arbitrary commands against the database.\nNotice the trailing pair of hyphens (--), which specifies to most database servers that the remainder of the statement is to be treated as a comment and not executed. In this case the comment character serves to remove the trailing single-quote left over from the modified query. On a database where comments are not allowed to be used in this way, the general attack could still be made effective using a trick similar to the one shown in the previous example.\nIf an attacker enters the string\n(attack code)\nname'; DELETE FROM items; SELECT * FROM items WHERE 'a'='a\nThen the following three valid statements will be created:\n(attack code)\nSELECT * FROM items WHERE owner = 'wiley' AND itemname = 'name';\nDELETE FROM items;\nSELECT * FROM items WHERE 'a'='a';",
+    "threats": [
+      "A03-Injection",
+      "SQL Injection"
+    ],
+    "stacks": [
+      "all"
+    ]
+  },
+  {
+    "title": "Claude Code IDE Integrations (VS Code & JetBrains)",
+    "url": "https://docs.anthropic.com/en/docs/claude-code/ide-integrations",
+    "content": "ggle switches to enable or disable them\nAvailable plugins\nfrom your configured marketplaces appear below\nSearch to filter plugins by name or description\nClick\nInstall\non any available plugin\nWhen you install a plugin, choose the installation scope:\nInstall for you\n: available in all your projects (user scope)\nInstall for this project\n: shared with project collaborators (project scope)\nInstall locally\n: only for you, only in this repository (local scope)\nManage marketplaces\nSwitch to the\nMarketplaces\ntab to add or remove plugin sources:\nEnter a GitHub repo, URL, or local path to add a new marketplace\nClick the refresh icon to update a marketplace\u2019s plugin list\nClick the trash icon to remove a marketplace\nAfter making changes, a banner prompts you to restart Claude Code to apply the updates.",
+    "threats": [],
+    "stacks": [
+      "all"
+    ]
+  }
+]

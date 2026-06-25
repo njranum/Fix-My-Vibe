@@ -20,6 +20,14 @@ FIXTURES = REPO_ROOT / "tests" / "fixtures"
 collect_ignore = ["fixtures"]
 
 
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "foundry: live Azure AI Search / Foundry integration test — opt-in, "
+        "skipped unless the relevant credentials are set (see test skipif).",
+    )
+
+
 @pytest.fixture
 def fixtures_dir() -> Path:
     """Absolute path to tests/fixtures."""

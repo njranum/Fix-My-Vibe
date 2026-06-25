@@ -1,0 +1,70 @@
+[
+  {
+    "title": "Fix My Vibe Internal Security Patterns (kb/security-patterns/)",
+    "url": "local://hackathon/kb/security-patterns/",
+    "content": "# ai-tool-config-hygiene.md\n\n# AI Tool Configuration Hygiene\n\nHow AI coding tool configuration itself becomes a security surface. Part of the\nFix My Vibe knowledge base.\n\n## .env files readable by AI tools\n\n**Pattern:** Cursor, Claude Code, and similar tools index or read project files for\ncontext. A `.env` in the project root flows into the AI context window \u2014 and from there\npotentially into completions, logs, or telemetry.\n\n**Fix:** `.cursorignore` (Cursor) must list `.env`, `.env.*`, `*.pem`, `*.key`,\n`credentials.json`, `secrets/`. Claude Code: add a deny rule for secret paths or keep\nsecrets outside the workspace. And `.gitignore` them regardless.\n\n## Secrets pasted into context files\n\n**Pattern:** Connection strings or tokens written into CLAUDE.md / .cursorrules \"so the\nAI knows the",
+    "threats": [
+      "All 7 categories"
+    ],
+    "stacks": [
+      "python",
+      "fastapi",
+      "javascript",
+      "react"
+    ]
+  },
+  {
+    "title": "Fix My Vibe Internal Security Patterns (kb/security-patterns/)",
+    "url": "local://hackathon/kb/security-patterns/",
+    "content": "Keys pasted into a chat for\n\"context\" get echoed back into generated code, or the model fabricates a plausible-looking\nliteral where a config lookup belongs.\n\n**Fix:** Secrets only via environment/secret manager. Scan for known key formats\n(`sk-`, `AKIA`, `ghp_`, `xox?-`, `AIza`) before every commit. Rotate anything that\never appeared in source.\n\n## Swallowed exceptions (OWASP A09: Security Logging and Monitoring Failures)\n\n**Pattern:** `except Exception: pass` / empty `catch {}` \u2014 generated to \"make the error\ngo away\". Failures become silent, including security-relevant ones.\n\n**Fix:** Catch specific exceptions, log with context, re-raise or return a deliberate\nerror. An empty catch block needs a comment justifying it.\n\n## Outdated or weak cryptography (OWASP A02: Cryptographic Failures)\n",
+    "threats": [
+      "All 7 categories"
+    ],
+    "stacks": [
+      "python",
+      "fastapi",
+      "javascript",
+      "react"
+    ]
+  },
+  {
+    "title": "OWASP Top 10 2025 - A05 Injection",
+    "url": "https://raw.githubusercontent.com/OWASP/Top10/master/2025/docs/en/A05_2025-Injection.md",
+    "content": "# A05:2025 Injection ![icon](../assets/TOP_10_Icons_Final_Injection.png){: style=\"height:80px;width:80px\" align=\"right\"}\n\n## Background. \n\nInjection falls two spots from #3 to #5 in the ranking, maintaining its position relative to A04:2025-Cryptographic Failures and A06:2025-Insecure Design. Injection is one of the most tested categories with 100% of applications tested for some form of injection. It had the greatest number of CVEs for any category, with 37 CWEs in this category. Injection includes Cross-site Scripting (high frequency/low impact) with more than 30k CVEs and SQL Injection (low frequency/high impact) with more than 14k CVEs. The massive number of reported CVEs for CWE-79 Improper Neutralization of Input During Web Page Generation ('Cross-site Scripting') brings down the ave",
+    "threats": [
+      "A05-Injection",
+      "SQL Injection",
+      "Command Injection",
+      "Eval/exec"
+    ],
+    "stacks": [
+      "all"
+    ]
+  },
+  {
+    "title": "Django Security Documentation",
+    "url": "https://docs.djangoproject.com/en/stable/topics/security/",
+    "content": "Documentation\nDjango Developer Survey\nThe Django Software Foundation is once again partnering with JetBrains to run the 2026 Django Developer Survey \ud83d\udcca Help us better understand how Django is being used around the world and guide future technical and community decisions.\nRead more on the Django blog\nTake the survey \u2728\nGetting Help\nzh-hans\nsv\npt-br\npl\nko\nja\nit\nid\nfr\nes\nel\ndev\n6.1\n5.2\n5.1\n5.0\n4.2\n4.1\n4.0\n3.2\n3.1\n3.0\n2.2\n2.1\n2.0\n1.11\n1.10\n1.8\nSecurity in Django\nThis document is an overview of Django\u2019s security features. It includes advice\non securing a Django-powered site.\nAlways sanitize user input\nThe golden rule of web application security is to never trust user-controlled\ndata. Hence, all user input should be sanitized before being used in your\napplication. See the\nforms documentation\nfor\nd",
+    "threats": [
+      "A03-SQL Injection (ORM protection)",
+      "A05-CSRF Protection",
+      "A05-Security Settings",
+      "A09-Logging"
+    ],
+    "stacks": [
+      "django"
+    ]
+  },
+  {
+    "title": "CWE-89: SQL Injection",
+    "url": "https://cwe.mitre.org/data/definitions/89.html",
+    "content": "arbitrary commands against the database.\nNotice the trailing pair of hyphens (--), which specifies to most database servers that the remainder of the statement is to be treated as a comment and not executed. In this case the comment character serves to remove the trailing single-quote left over from the modified query. On a database where comments are not allowed to be used in this way, the general attack could still be made effective using a trick similar to the one shown in the previous example.\nIf an attacker enters the string\n(attack code)\nname'; DELETE FROM items; SELECT * FROM items WHERE 'a'='a\nThen the following three valid statements will be created:\n(attack code)\nSELECT * FROM items WHERE owner = 'wiley' AND itemname = 'name';\nDELETE FROM items;\nSELECT * FROM items WHERE 'a'='a';",
+    "threats": [
+      "A03-Injection",
+      "SQL Injection"
+    ],
+    "stacks": [
+      "all"
+    ]
+  }
+]

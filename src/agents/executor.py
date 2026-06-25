@@ -116,7 +116,21 @@ def _display_plan(action_plan: dict) -> None:
         action_type = action.get("action", "create").upper()
         print(f"  [{action.get('rank', '?')}] {priority_icon} {priority} — {action_type} {action.get('file', '')}")
         print(f"      {action.get('reason', '')}")
-        if action.get("content"):
+        if action.get("action") == "remediate":
+            # Show the exact diff — code edits are confirmed on the change itself.
+            if action.get("rationale"):
+                print(f"      Why: {action['rationale']}")
+            patch = action.get("patch", "")
+            for pline in patch.splitlines():
+                if pline.startswith(("+++", "---", "@@")):
+                    continue
+                if pline.startswith("+"):
+                    print(f"        + {pline[1:].strip()}")
+                elif pline.startswith("-"):
+                    print(f"        - {pline[1:].strip()}")
+            if action.get("requires_followup"):
+                print(f"      ⚠ Follow-up required: {action['requires_followup']}")
+        elif action.get("content"):
             tokens = action.get("estimated_tokens", 0)
             print(f"      Content: {tokens} tokens")
         print()
@@ -210,6 +224,34 @@ def run(input: dict, confirm_fn=None) -> dict:
 
         if rank not in confirmed_ranks:
             skipped.append({"rank": rank, "file": file_path, "reason": "not selected"})
+            continue
+
+        # Code remediation: a targeted in-place edit, not a whole-file write.
+        # Handled before the content-None skip below — remediate actions carry no
+        # `content` field by design, so they would otherwise be dropped as "manual".
+        if action.get("action") == "remediate":
+            from src.tools.remediation import apply_code_fix
+            result = apply_code_fix(
+                project_path,
+                file_path,
+                action.get("line"),
+                action.get("expected_line", ""),
+                action.get("proposed_line", ""),
+                action.get("add_imports", ()),
+            )
+            if "error" in result:
+                errors.append({"rank": rank, "file": file_path, "error": result["error"]})
+                print(f"  ✗ ERROR fixing {file_path}: {result['error']}")
+            else:
+                executed.append({
+                    "rank": rank,
+                    "file": file_path,
+                    "status": "remediated",
+                    "backed_up": result.get("backed_up", False),
+                    "backup_path": result.get("backup_path"),
+                    "line": action.get("line"),
+                })
+                print(f"  ✓ Fixed: {file_path}:{action.get('line')} (backup created)")
             continue
 
         if action.get("action") == "improve" or content is None:

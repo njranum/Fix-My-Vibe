@@ -1,0 +1,70 @@
+[
+  {
+    "title": "CWE-94: Improper Control of Generation of Code (Code Injection)",
+    "url": "https://cwe.mitre.org/data/definitions/94.html",
+    "content": "d off\" the construction of the original function call, in order to prevent parsing errors from causing the malicious eval() to fail before the attacker's payload is activated. This particular manipulation would fail after the system() call, because the \"_key(\\$fname, \\$key, \\$val)\" portion of the string would cause an error, but this is irrelevant to the attack because the payload has already been activated.\nExample 3\nThis simple python3 script asks a user to supply a comma-separated list of numbers as input and adds them together.\n(bad code)\nExample Language:\nPython\ndef main():\nsum = 0\ntry:\nnumbers = eval(input(\"Enter a comma-separated list of numbers: \"))\nexcept SyntaxError:\nprint(\"Error: invalid input\")\nreturn\nfor num in numbers:\nsum = sum + num\nprint(f\"Sum of {numbers} = {sum}\")\nmain()",
+    "threats": [
+      "A03-Injection",
+      "Eval/exec"
+    ],
+    "stacks": [
+      "python",
+      "javascript",
+      "all"
+    ]
+  },
+  {
+    "title": "Fix My Vibe Internal Security Patterns (kb/security-patterns/)",
+    "url": "local://hackathon/kb/security-patterns/",
+    "content": "# ai-tool-config-hygiene.md\n\n# AI Tool Configuration Hygiene\n\nHow AI coding tool configuration itself becomes a security surface. Part of the\nFix My Vibe knowledge base.\n\n## .env files readable by AI tools\n\n**Pattern:** Cursor, Claude Code, and similar tools index or read project files for\ncontext. A `.env` in the project root flows into the AI context window \u2014 and from there\npotentially into completions, logs, or telemetry.\n\n**Fix:** `.cursorignore` (Cursor) must list `.env`, `.env.*`, `*.pem`, `*.key`,\n`credentials.json`, `secrets/`. Claude Code: add a deny rule for secret paths or keep\nsecrets outside the workspace. And `.gitignore` them regardless.\n\n## Secrets pasted into context files\n\n**Pattern:** Connection strings or tokens written into CLAUDE.md / .cursorrules \"so the\nAI knows the",
+    "threats": [
+      "All 7 categories"
+    ],
+    "stacks": [
+      "python",
+      "fastapi",
+      "javascript",
+      "react"
+    ]
+  },
+  {
+    "title": "CWE-94: Improper Control of Generation of Code (Code Injection)",
+    "url": "https://cwe.mitre.org/data/definitions/94.html",
+    "content": "relevant properties, including length, type of input, the full range of acceptable values, missing or extra inputs, syntax, consistency across related fields, and conformance to business rules. As an example of business rule logic, \"boat\" may be syntactically valid because it only contains alphanumeric characters, but it is not valid if the input is only expected to contain colors such as \"red\" or \"blue.\"\nDo not rely exclusively on looking for malicious or malformed inputs. This is likely to miss at least one undesirable input, especially if the code's environment changes. This can give attackers enough room to bypass the intended validation. However, denylists can be useful for detecting potential attacks or determining which inputs are so malformed that they should be rejected outright.\n",
+    "threats": [
+      "A03-Injection",
+      "Eval/exec"
+    ],
+    "stacks": [
+      "python",
+      "javascript",
+      "all"
+    ]
+  },
+  {
+    "title": "CWE-94: Improper Control of Generation of Code (Code Injection)",
+    "url": "https://cwe.mitre.org/data/definitions/94.html",
+    "content": "n: regex in EXIF processor code does not correctly determine where a string ends (\nCWE-625\n), enabling eval injection (\nCWE-95\n), as exploited in the wild per CISA KEV.\nCVE-2020-8218\n\"Code injection\" in VPN product, as exploited in the wild per CISA KEV.\nCVE-2008-5071\nEval injection in PHP program.\nCVE-2002-1750\nEval injection in Perl program.\nCVE-2008-5305\nEval injection in Perl program using an ID that should only contain hyphens and numbers.\nCVE-2002-1752\nDirect code injection into Perl eval function.\nCVE-2002-1753\nEval injection in Perl program.\nCVE-2005-1527\nDirect code injection into Perl eval function.\nCVE-2005-2837\nDirect code injection into Perl eval function.\nCVE-2005-1921\nMFV. code injection into PHP eval statement using nested constructs that should not be nested.\nCVE-2005-2498",
+    "threats": [
+      "A03-Injection",
+      "Eval/exec"
+    ],
+    "stacks": [
+      "python",
+      "javascript",
+      "all"
+    ]
+  },
+  {
+    "title": "CWE-89: SQL Injection",
+    "url": "https://cwe.mitre.org/data/definitions/89.html",
+    "content": "arbitrary commands against the database.\nNotice the trailing pair of hyphens (--), which specifies to most database servers that the remainder of the statement is to be treated as a comment and not executed. In this case the comment character serves to remove the trailing single-quote left over from the modified query. On a database where comments are not allowed to be used in this way, the general attack could still be made effective using a trick similar to the one shown in the previous example.\nIf an attacker enters the string\n(attack code)\nname'; DELETE FROM items; SELECT * FROM items WHERE 'a'='a\nThen the following three valid statements will be created:\n(attack code)\nSELECT * FROM items WHERE owner = 'wiley' AND itemname = 'name';\nDELETE FROM items;\nSELECT * FROM items WHERE 'a'='a';",
+    "threats": [
+      "A03-Injection",
+      "SQL Injection"
+    ],
+    "stacks": [
+      "all"
+    ]
+  }
+]
