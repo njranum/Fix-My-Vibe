@@ -1,6 +1,81 @@
 # Fix My Vibe — Progress
 
-_Updated: 2026-06-24 (branch `azure-ai-search-kb`) — Azure MCP server added for direct index inspection_
+_Updated: 2026-06-24 (branch `feat/mcp-server`) — Fix My Vibe exposed as a local MCP server_
+
+---
+
+## What Was Built (MCP server session)
+
+Exposed Fix My Vibe as a **local MCP server** (stdio) so an agent (Claude Code) can call
+it directly instead of shelling out to the CLI. The CLI is retained, unchanged, as the
+fallback. Both front-ends now call the same orchestrator phase functions, so output is
+identical.
+
+### Orchestrator refactor (`src/orchestrator.py`)
+
+Split the pipeline into write-segregated, reusable phase functions:
+
+- `_resolve_mode(mode)` — `"auto"` → foundry when `FOUNDRY_PROJECT_ENDPOINT` set, else local.
+- `run_plan_phase(path, mode, verbose)` — Scanner → Researcher → Planner. **No writes.**
+  Returns `{mode, scan_result, research_result, plan_result}`. Builds the Foundry client
+  once and falls back to local if it can't.
+- `run_apply_phase(path, plan_result, confirmed_ranks, mode, verbose)` — Executor (for the
+  confirmed ranks) → Verifier. **Only code path that writes.**
+- `run_local` / `run_with_foundry` now delegate to a shared `_run_pipeline` that does
+  plan → confirm → apply. CLI behavior preserved (confirmation gate, plan display, writes,
+  backups, `--yes`, `--scan-only`, final summary). One cosmetic change: per-agent
+  `[ n/5 ]` progress lines consolidated into `[ 1/2 ]` / `[ 2/2 ]`.
+
+### MCP server (`src/mcp_server.py`)
+
+FastMCP (official `mcp` SDK ≥1.12), stdio transport, three tools:
+
+- `scan_project(path, mode)` — read-only diagnosis (Scanner only).
+- `propose_fixes(path, mode)` — dry run; full ranked plan with file content. No writes.
+- `apply_fixes(path, mode)` — single call: plan → **elicitation prompt** (one checkbox per
+  writable fix, high-priority pre-checked) → write only ticked fixes → verify.
+
+Safety: only `run_apply_phase` writes. If the client doesn't advertise `elicitation`,
+`apply_fixes` returns `needs_review` and writes nothing (fail safe). All agent stdout is
+redirected to stderr so it never corrupts the JSON-RPC channel. `_reasoning_trace` keys are
+stripped from returned payloads.
+
+### Registration
+
+```
+claude mcp add fix-my-vibe -- /path/to/.venv/bin/python3 /path/to/src/mcp_server.py
+```
+
+`pyproject.toml` also gained a `fix-my-vibe-mcp` console entry point.
+
+### Verified
+
+- `run_plan_phase` on `tests/fixtures/vulnerable-project` returns 4 actions, writes nothing
+  (fixture unchanged via `git status`).
+- `run_apply_phase` with a rank subset on a copy writes only those files; `.bak` backup
+  created when overwriting a pre-existing file.
+- MCP smoke (in-memory client): three tools list; scan/propose touch no files; `apply_fixes`
+  elicitation ticking only SECURITY.md writes only SECURITY.md.
+- Fail-safe: no-elicitation-capability, declined, and tick-nothing all write zero files.
+- CLI `--local --yes` and `--scan-only --local` still work end to end.
+
+### Registered + e2e verified (2026-06-25 session)
+
+- Installed `mcp` 1.28.0 into the venv.
+- Registered with Claude Code at **local scope** (private to this project, in
+  `~/.claude.json`) — matches the existing `azure-mcp` registration and avoids committing a
+  machine-specific venv path to a repo-tracked `.mcp.json`. `claude mcp list` shows
+  `fix-my-vibe ✔ Connected`.
+- Ran a scripted e2e of `apply_fixes` (elicitation mocked, per the confirm-gate rule) on
+  `/tmp` fixture copies: accept-subset writes only ticked files; no-elicitation →
+  `needs_review` (0 writes); decline → `cancelled` (0 writes); overwrite creates a `.bak`.
+- Full registration + test guide: `docs/MCP_SERVER.md`.
+
+### Next immediate task
+
+- Manual live UI test in a **fresh** Claude Code session against `/tmp/fmv-demo` (confirm the
+  elicitation checkbox prompt renders). Steps in `docs/MCP_SERVER.md`.
+- Optional: test `apply_fixes` in Foundry mode (requires Azure creds + `az login`).
 
 ---
 

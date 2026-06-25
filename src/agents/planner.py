@@ -644,7 +644,24 @@ def run_with_foundry(client, scan_result: dict, research: dict) -> dict:
     result["_reasoning_trace"] = reasoning
     client.agents.delete_agent(agent.id)
     _ensure_security_actions(result, scan_result)
+    _normalize_ranks(result)
     return result
+
+
+def _normalize_ranks(plan: dict) -> None:
+    """Guarantee unique, sequential ranks (1..N) over the action list.
+
+    The planner instructions tell o4-mini to give every security action rank 1,
+    so its raw output routinely contains duplicate ranks. ``apply_fixes`` keys
+    both the confirmation filter and the elicitation checkbox fields (``fix_{rank}``)
+    on rank, so duplicates would collapse distinct fixes into a single selectable
+    item — you couldn't choose one without the other. Renumber deterministically by
+    list position, which preserves the security-first ordering the model produces.
+    """
+    actions = plan.get("actions", [])
+    for i, action in enumerate(actions, start=1):
+        action["rank"] = i
+    plan["total_actions"] = len(actions)
 
 
 def _ensure_security_actions(plan: dict, scan_result: dict) -> None:
