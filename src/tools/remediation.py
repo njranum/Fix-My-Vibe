@@ -16,6 +16,8 @@ executor) is the final decision. See docs/code-remediation-plan.md §4.
 """
 
 import re
+import os
+import sys
 import ast
 import shutil
 import difflib
@@ -351,3 +353,86 @@ def rollback(backup_path: str, target_path: str) -> dict:
         return {"error": f"Backup not found: {backup_path}"}
     shutil.copy2(backup, target)
     return {"restored": str(target), "from": str(backup)}
+
+
+# --------------------------------------------------------------------------- #
+# Undo / rollback across a whole run
+# --------------------------------------------------------------------------- #
+
+_BAK_RE = re.compile(r"^(.+?)\.bak(?:\.(\d+))?$")
+
+
+def _backup_groups(project_path: str) -> dict[Path, list[tuple[int, Path]]]:
+    """Map each backed-up target file to its backups, sorted oldest-first.
+
+    Versioned backups are `<file>.bak` (version 0, the pristine pre-run original)
+    then `.bak.1`, `.bak.2`… so the version-0 entry is always the file to restore.
+    """
+    base = Path(project_path).resolve()
+    groups: dict[Path, list[tuple[int, Path]]] = {}
+    for p in base.rglob("*"):
+        if not p.is_file():
+            continue
+        m = _BAK_RE.match(p.name)
+        if not m:
+            continue
+        target = p.with_name(m.group(1))
+        version = int(m.group(2)) if m.group(2) else 0
+        groups.setdefault(target, []).append((version, p))
+    for baks in groups.values():
+        baks.sort()
+    return groups
+
+
+def find_backups(project_path: str) -> dict[str, str]:
+    """{target_file: oldest_backup} for every Fix My Vibe backup under the project."""
+    return {str(t): str(baks[0][1]) for t, baks in _backup_groups(project_path).items()}
+
+
+def restore_backups(project_path: str) -> list[str]:
+    """Undo a run: restore each target from its oldest (pristine) backup and remove
+    all of that target's backup files. Returns the list of restored target paths."""
+    restored: list[str] = []
+    for target, baks in _backup_groups(project_path).items():
+        oldest = baks[0][1]
+        try:
+            shutil.copy2(oldest, target)
+            for _version, p in baks:
+                p.unlink()
+            restored.append(str(target))
+        except OSError:
+            continue
+    return restored
+
+
+# --------------------------------------------------------------------------- #
+# Diff rendering (terminal)
+# --------------------------------------------------------------------------- #
+
+_ANSI = {"red": "\033[31m", "green": "\033[32m", "cyan": "\033[36m",
+         "dim": "\033[2m", "reset": "\033[0m"}
+
+
+def render_diff(patch: str, indent: str = "      ", color: bool | None = None) -> str:
+    """Render a unified diff for the terminal: added lines green, removed red, hunk
+    headers cyan, context dimmed. Colour auto-enables on a TTY (off when piped, in
+    --json, or when NO_COLOR is set)."""
+    if color is None:
+        color = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
+
+    def paint(text: str, col: str) -> str:
+        return f"{_ANSI[col]}{text}{_ANSI['reset']}" if color else text
+
+    out: list[str] = []
+    for line in patch.splitlines():
+        if line.startswith(("+++", "---")):
+            continue
+        if line.startswith("@@"):
+            out.append(indent + paint(line, "cyan"))
+        elif line.startswith("+"):
+            out.append(indent + paint(line, "green"))
+        elif line.startswith("-"):
+            out.append(indent + paint(line, "red"))
+        else:
+            out.append(indent + paint(line, "dim"))
+    return "\n".join(out)

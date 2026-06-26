@@ -120,14 +120,13 @@ def _display_plan(action_plan: dict) -> None:
             # Show the exact diff — code edits are confirmed on the change itself.
             if action.get("rationale"):
                 print(f"      Why: {action['rationale']}")
+            from src.tools.remediation import render_diff
             patch = action.get("patch", "")
-            for pline in patch.splitlines():
-                if pline.startswith(("+++", "---", "@@")):
-                    continue
-                if pline.startswith("+"):
-                    print(f"        + {pline[1:].strip()}")
-                elif pline.startswith("-"):
-                    print(f"        - {pline[1:].strip()}")
+            if patch:
+                print(render_diff(patch))
+            for cite in action.get("kb_citations", [])[:2]:
+                if cite.get("title"):
+                    print(f"      ↳ {cite['title']}")
             if action.get("requires_followup"):
                 print(f"      ⚠ Follow-up required: {action['requires_followup']}")
         elif action.get("content"):

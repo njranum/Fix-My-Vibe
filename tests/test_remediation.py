@@ -214,6 +214,52 @@ def test_rollback_restores_original(tmp_path):
     assert 'verify=False' in f.read_text()
 
 
+# --- undo / rollback across a run ----------------------------------------------
+
+def test_find_backups_picks_oldest(tmp_path):
+    (tmp_path / "app.py").write_text("fixed\n")
+    (tmp_path / "app.py.bak").write_text("ORIGINAL\n")     # version 0 (pristine)
+    (tmp_path / "app.py.bak.1").write_text("intermediate\n")
+    backups = rem.find_backups(str(tmp_path))
+    assert backups[str(tmp_path / "app.py")] == str(tmp_path / "app.py.bak")
+
+
+def test_restore_backups_round_trip(tmp_path):
+    f = tmp_path / "app.py"
+    f.write_text('import sqlite3\nKEY = "literal"\n')
+    # simulate two edits to the same file in one run (two backups)
+    rem.apply_code_fix(str(tmp_path), "app.py", 2, 'KEY = "literal"',
+                       'KEY = os.environ["KEY"]', add_imports=["os"])
+    assert "os.environ" in f.read_text()
+
+    restored = rem.restore_backups(str(tmp_path))
+    assert str(f) in restored
+    assert f.read_text() == 'import sqlite3\nKEY = "literal"\n'      # back to original
+    assert not list(tmp_path.glob("*.bak*"))                         # backups cleaned up
+
+
+def test_restore_backups_nothing_to_do(tmp_path):
+    assert rem.restore_backups(str(tmp_path)) == []
+
+
+# --- diff rendering ------------------------------------------------------------
+
+def test_render_diff_plain_no_color():
+    patch = rem.make_unified_diff("a = 1\n", "a = 2\n", "x.py")
+    out = rem.render_diff(patch, color=False)
+    assert "+a = 2" in out
+    assert "-a = 1" in out
+    assert "---" not in out and "+++" not in out   # file headers stripped
+    assert "\033[" not in out                       # no ANSI when color off
+
+
+def test_render_diff_color_adds_ansi():
+    patch = rem.make_unified_diff("a = 1\n", "a = 2\n", "x.py")
+    out = rem.render_diff(patch, color=True)
+    assert "\033[32m" in out  # green for additions
+    assert "\033[31m" in out  # red for removals
+
+
 # --- scan_file (single-file, cap-free entry point) -----------------------------
 
 def test_scan_file_finds_single_finding(tmp_path):

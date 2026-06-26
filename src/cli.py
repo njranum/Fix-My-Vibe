@@ -48,6 +48,11 @@ def main() -> None:
         action="store_true",
         help="Only run the Scanner agent — no planning or file writes",
     )
+    parser.add_argument(
+        "--undo",
+        action="store_true",
+        help="Restore files from Fix My Vibe backups (undo a previous run's edits)",
+    )
 
     args = parser.parse_args()
 
@@ -65,6 +70,10 @@ def main() -> None:
         load_dotenv()
     except ImportError:
         pass
+
+    if args.undo:
+        _run_undo(str(project_path), assume_yes=args.yes)
+        return
 
     confirm_fn = None
     if args.yes:
@@ -87,6 +96,7 @@ def main() -> None:
         print(json.dumps(result, indent=2))
     else:
         _print_final_summary(result)
+        _maybe_print_undo_hint(result, str(project_path))
 
 
 def _run_scan_only(project_path: str, verbose: bool, output_json: bool, use_local: bool = False) -> None:
@@ -123,6 +133,45 @@ def _run_scan_only(project_path: str, verbose: bool, output_json: bool, use_loca
             print("────────────────────────────────────────────────────────────")
         print("\nFull scan result (JSON):")
         print(json.dumps(result, indent=2))
+
+
+def _run_undo(project_path: str, assume_yes: bool = False) -> None:
+    """Restore files from Fix My Vibe backups — undo a previous run's edits."""
+    from src.tools.remediation import find_backups, restore_backups
+
+    base = Path(project_path)
+    backups = find_backups(project_path)
+    if not backups:
+        print("\n  No Fix My Vibe backups found — nothing to undo.\n")
+        return
+
+    print(f"\n  Fix My Vibe — undo: restore {len(backups)} file(s) from backup:")
+    for target in sorted(backups):
+        try:
+            shown = Path(target).relative_to(base.resolve())
+        except ValueError:
+            shown = Path(target).name
+        print(f"    • {shown}")
+    print("  (newly-created files are left in place — undo only reverts overwritten/edited files)")
+
+    if not assume_yes:
+        try:
+            choice = input("\n  Restore these files and remove backups? [y/N]: ").strip().lower()
+        except EOFError:
+            choice = "n"
+        if choice != "y":
+            print("  Cancelled. Nothing changed.\n")
+            return
+
+    restored = restore_backups(project_path)
+    print(f"\n  Restored {len(restored)} file(s) from backup.\n")
+
+
+def _maybe_print_undo_hint(result: dict, project_path: str) -> None:
+    """After a run that edited source files, tell the user how to undo it."""
+    executed = result.get("execution_result", {}).get("executed", [])
+    if any(e.get("status") == "remediated" for e in executed):
+        print(f"  Undo the code fixes with:  fix-my-vibe {project_path} --undo\n")
 
 
 def _print_final_summary(result: dict) -> None:
