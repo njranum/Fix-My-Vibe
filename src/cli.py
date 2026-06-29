@@ -53,6 +53,12 @@ def main() -> None:
         action="store_true",
         help="Restore files from Fix My Vibe backups (undo a previous run's edits)",
     )
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help="Emit per-phase timing instrumentation to .fmv-traces/ and print a "
+             "wall-time breakdown (diagnose where the pipeline spends its time)",
+    )
 
     args = parser.parse_args()
 
@@ -71,6 +77,20 @@ def main() -> None:
     except ImportError:
         pass
 
+    # Resolve the effective mode ONCE (after .env load) so the trace label and
+    # the run branch agree. Foundry needs both --local absent AND an endpoint set.
+    foundry = not args.local and bool(os.environ.get("FOUNDRY_PROJECT_ENDPOINT"))
+    effective_mode = "foundry" if foundry else "local"
+
+    # Start timing instrumentation before any agent runs (no-op unless --trace
+    # or FMV_TRACE=1). Label the trace file with the RESOLVED mode, not the flag.
+    from src.tracing import init_tracing, print_summary
+    init_tracing(args.trace, run_label=effective_mode)
+    if args.trace and not foundry:
+        why = "--local passed" if args.local else "FOUNDRY_PROJECT_ENDPOINT not set"
+        print(f"  Note: tracing a LOCAL run ({why}) — cloud metrics "
+              f"(model round-trips, polls, provisioning) will be zero.\n", file=sys.stderr)
+
     if args.undo:
         _run_undo(str(project_path), assume_yes=args.yes)
         return
@@ -81,10 +101,11 @@ def main() -> None:
 
     if args.scan_only:
         _run_scan_only(str(project_path), args.verbose, args.output_json, use_local=args.local)
+        print_summary()
         return
 
-    if args.local or not os.environ.get("FOUNDRY_PROJECT_ENDPOINT"):
-        if not args.local and not os.environ.get("FOUNDRY_PROJECT_ENDPOINT"):
+    if not foundry:
+        if not args.local:
             print("  Note: FOUNDRY_PROJECT_ENDPOINT not set — running in local mode")
         from src.orchestrator import run_local
         result = run_local(str(project_path), confirm_fn=confirm_fn, verbose=args.verbose)
@@ -98,6 +119,8 @@ def main() -> None:
         _print_final_summary(result)
         _maybe_print_undo_hint(result, str(project_path))
 
+    print_summary()
+
 
 def _run_scan_only(project_path: str, verbose: bool, output_json: bool, use_local: bool = False) -> None:
     print(f"\n  Fix My Vibe — scan only: {project_path}\n")
@@ -105,9 +128,11 @@ def _run_scan_only(project_path: str, verbose: bool, output_json: bool, use_loca
     if not use_local and os.environ.get("FOUNDRY_PROJECT_ENDPOINT"):
         from src.foundry_utils import get_client
         from src.agents.scanner import run_with_foundry
+        from src import tracing
         print("  Using Azure Foundry (pass --local to force local mode)\n")
         client = get_client()
-        result = run_with_foundry(client, project_path)
+        with tracing.timed("scanner", kind="phase", set_phase=True):
+            result = run_with_foundry(client, project_path)
     else:
         from src.agents.scanner import run as scanner_run
         result = scanner_run({"project_path": project_path})

@@ -11,6 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src import tracing
+
 
 def _resolve_mode(mode: str) -> str:
     """Resolve the execution mode to a concrete 'local' or 'foundry'.
@@ -50,28 +52,35 @@ def run_plan_phase(project_path: str, mode: str = "auto", verbose: bool = False)
             resolved = "local"
 
     if resolved == "foundry":
-        scan_result = scanner.run_with_foundry(client, str(path))
+        with tracing.timed("scanner", kind="phase", set_phase=True):
+            scan_result = scanner.run_with_foundry(client, str(path))
         if verbose:
             _print_reasoning_trace(scan_result, "Scanner")
-        research_result = researcher.run_with_foundry(client, scan_result)
+        with tracing.timed("researcher", kind="phase", set_phase=True):
+            research_result = researcher.run_with_foundry(client, scan_result)
         if verbose:
             _print_reasoning_trace(research_result, "Researcher")
-        plan_result = planner.run_with_foundry(client, scan_result, research_result)
+        with tracing.timed("planner", kind="phase", set_phase=True):
+            plan_result = planner.run_with_foundry(client, scan_result, research_result)
         if verbose:
             _print_reasoning_trace(plan_result, "Planner")
-        _augment_with_remediations(plan_result, scan_result, client)
+        with tracing.timed("remediator", kind="phase", set_phase=True):
+            _augment_with_remediations(plan_result, scan_result, client)
     else:
-        scan_result = scanner.run({"project_path": str(path)})
+        with tracing.timed("scanner", kind="phase", set_phase=True):
+            scan_result = scanner.run({"project_path": str(path)})
         if verbose:
             print(json.dumps(scan_result, indent=2))
-        research_result = researcher.run({
-            "detected_tools": scan_result.get("detected_tools", []),
-            "detected_stack": scan_result.get("detected_stack", []),
-        })
-        plan_result = planner.run({
-            "scan_result": scan_result,
-            "research": research_result,
-        })
+        with tracing.timed("researcher", kind="phase", set_phase=True):
+            research_result = researcher.run({
+                "detected_tools": scan_result.get("detected_tools", []),
+                "detected_stack": scan_result.get("detected_stack", []),
+            })
+        with tracing.timed("planner", kind="phase", set_phase=True):
+            plan_result = planner.run({
+                "scan_result": scan_result,
+                "research": research_result,
+            })
 
     return {
         "mode": resolved,
@@ -154,14 +163,16 @@ def run_apply_phase(
         ]
         config_ranks = [r for r in confirmed_ranks if r not in remediate_ranks]
 
-        execution_result = executor.run_with_foundry(
-            client, str(path), plan_result, config_ranks
-        )
+        with tracing.timed("executor", kind="phase", set_phase=True):
+            execution_result = executor.run_with_foundry(
+                client, str(path), plan_result, config_ranks
+            )
         if verbose:
             _print_reasoning_trace(execution_result, "Executor")
-        verify_result = verifier.run_with_foundry(
-            client, str(path), execution_result, plan_result
-        )
+        with tracing.timed("verifier", kind="phase", set_phase=True):
+            verify_result = verifier.run_with_foundry(
+                client, str(path), execution_result, plan_result
+            )
         if verbose:
             _print_reasoning_trace(verify_result, "Verifier")
 
@@ -170,15 +181,17 @@ def run_apply_phase(
                 str(path), plan_result, remediate_ranks, execution_result, verify_result
             )
     else:
-        execution_result = executor.run(
-            {"project_path": str(path), "action_plan": plan_result},
-            confirm_fn=lambda _plan: confirmed_ranks,
-        )
-        verify_result = verifier.run({
-            "project_path": str(path),
-            "execution_result": execution_result,
-            "action_plan": plan_result,
-        })
+        with tracing.timed("executor", kind="phase", set_phase=True):
+            execution_result = executor.run(
+                {"project_path": str(path), "action_plan": plan_result},
+                confirm_fn=lambda _plan: confirmed_ranks,
+            )
+        with tracing.timed("verifier", kind="phase", set_phase=True):
+            verify_result = verifier.run({
+                "project_path": str(path),
+                "execution_result": execution_result,
+                "action_plan": plan_result,
+            })
 
     return {
         "execution_result": execution_result,
