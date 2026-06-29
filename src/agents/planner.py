@@ -12,87 +12,25 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from src.foundry_utils import (
-    get_last_assistant_message_with_reasoning,
-    parse_json_response,
+    get_last_assistant_message,
     create_thread_and_send,
     run_agent_with_tools,
 )
 from src.tools.mcp_catalog import recommend_mcp_servers
 
 
-PLANNER_INSTRUCTIONS = """
-You are the Planner agent for Fix My Vibe. You reason carefully about what a developer
-needs to fix in their AI coding tool setup and produce a prioritised, actionable plan.
+PLANNER_RATIONALE_INSTRUCTIONS = """
+You are the Planner agent for Fix My Vibe. The fixes for this project and their
+order have already been decided. Your ONLY job is to explain the prioritisation.
 
-You will receive a JSON object with:
-- scan_result: full output from the Scanner agent
-- research: best practices from the Researcher agent
+You receive a one-line project diagnosis and the ordered list of planned actions
+(each with rank, file, priority, reason). Explain, in 2-4 short sentences, WHY
+this order makes sense for THIS specific project — what is most urgent and why
+(e.g. why a hardcoded live credential outranks a missing config file). Be
+concrete and reference the actual files/risks. Do not restate the list
+mechanically, do not invent or remove any fixes.
 
-Your job:
-1. Analyse the gap between the current state (scan_result) and best practices (research)
-2. Rank all required fixes by impact and urgency (security always first)
-3. Generate the ACTUAL complete file content for each config file
-
-CRITICAL CONTENT RULES:
-- Write COMPLETE file content for every action — no placeholders, no "add here" comments, no template markers
-- Two different projects MUST produce different CLAUDE.md files — base content on the actual scan data
-- For CLAUDE.md: use readme_summary from conventions as the Overview; include the exact test_command,
-  build_command, lint_command detected; reference actual key_directories; add DO NOT rules specific to the stack
-- If the input includes mcp_recommendations, add a "## Recommended MCP servers" section to CLAUDE.md:
-  one bullet per server with its "why" and its install command in backticks, copied VERBATIM —
-  never invent or alter MCP server names or install commands
-- For .cursorrules: reference the actual detected stack and frameworks; include detected linting/test tools
-- For .cursorignore: always include .env, .env.*, *.pem, *.key, node_modules/, __pycache__/, .venv/
-- For .gitignore: generate a comprehensive file appropriate to the detected stack
-- If scan_result.code_security_findings is non-empty, add a SECURITY.md action (priority high if any
-  finding is high severity). Render EVERY finding with its exact file, line, snippet, and recommendation
-  copied from the scan data — never invent, drop, or reword findings. Findings are facts from a
-  deterministic scanner; your job is structure and prioritisation, not re-detection.
-  SECURITY.md format: title "# Security Audit — <project name>"; one-line framing that these are
-  "code patterns AI coding assistants commonly introduce"; "## Summary" with finding counts by severity;
-  "## High severity" then "## Medium severity" sections, each finding as
-  "### `file:line` — description" followed by the snippet in a ``` code fence and "**Fix:** <recommendation>";
-  end with "## Next steps".
-- If AI tools are detected and scan_result.has_prompts_md is false, add a PROMPTS.md action
-  (priority medium, after config fixes). Generate 5-8 copy-paste-ready prompts tailored to the
-  ACTUAL detected stack and conventions — every prompt must reference the real test command,
-  real key directories, or real frameworks found in the scan; a FastAPI project and a Next.js
-  project must get different prompts. Format: "# Prompt Library — <project name>"; "## How to use";
-  "## Everyday development", "## Code quality", "## Stack-specific" sections; each prompt as
-  "### <title>" with the prompt text in a ``` code fence, using <placeholders> for the parts
-  the developer fills in. Always include one prompt for reviewing code for AI-introduced
-  security patterns.
-- Security actions are ALWAYS rank 1 — never deprioritize security fixes
-
-Output a JSON ActionPlan with this structure:
-{
-  "actions": [
-    {
-      "rank": 1,
-      "tool": "claude_code",
-      "action": "create",
-      "file": "CLAUDE.md",
-      "priority": "high",
-      "reason": "Claude Code detected (claude CLI on PATH) but no CLAUDE.md exists",
-      "content": "# cursor-project\\n\\n## Overview\\nA FastAPI REST API...\\n\\n## Commands\\n- **Test:** `pytest`\\n...",
-      "expected_sections": ["Overview", "Commands", "DO NOT"],
-      "estimated_tokens": 450
-    }
-  ],
-  "security_actions": [
-    {
-      "rank": 1,
-      "issue_type": "exposed_env",
-      "file_to_create": ".gitignore",
-      "description": "Add .env to .gitignore immediately"
-    }
-  ],
-  "convention_summary": "Python project using FastAPI. Tests run with pytest. Lint with ruff.",
-  "plan_summary": "3 actions required. 2 high priority, 1 medium.",
-  "total_actions": 3
-}
-
-Return ONLY the JSON — no markdown fences, no preamble.
+Reply with the explanation only — plain prose, no preamble, no markdown, no JSON.
 """
 
 
@@ -708,35 +646,74 @@ def run(input: dict) -> dict:
 def run_with_foundry(client, scan_result: dict, research: dict) -> dict:
     """Run the Planner agent using Azure AI Foundry Agents API.
 
-    Pure reasoning — no tools. o4-mini analyses the scan + research and generates
-    the actual file content for each action. Not a template, not a review.
+    Design (see docs/PERFORMANCE-DECISIONS.md, D-P1): file CONTENT and rank
+    ORDER are produced deterministically in Python. Asking the LLM to regenerate
+    5-6 files of mostly-boilerplate content in one JSON timed out (~323s, never
+    completed) and produced corrupt output — and that content has no reasoning in
+    it. The Azure LLM is reserved for the one part that genuinely rewards
+    reasoning: explaining the prioritisation for this specific project.
+
+    The plan is COMPLETE before the LLM is called; the rationale only enriches it,
+    so any LLM failure (or timeout) is non-fatal — the plan still stands.
+    """
+    # 1. Deterministic plan — full content + ranks, in milliseconds.
+    plan = run({"scan_result": scan_result, "research": research})
+
+    # 2. Thin reasoning layer: one small Azure call for the prioritisation "why".
+    try:
+        rationale = _reason_about_priorities(client, scan_result, plan)
+    except Exception as e:
+        rationale = ""
+        print(f"  Planner rationale unavailable ({e}) — plan stands without it")
+
+    if rationale:
+        plan["prioritization_rationale"] = rationale
+        plan["_reasoning_trace"] = rationale
+
+    # 3. Deterministic guarantees still apply (no-ops on an already-complete plan).
+    _ensure_security_actions(plan, scan_result)
+    _normalize_ranks(plan)
+    return plan
+
+
+def _reason_about_priorities(client, scan_result: dict, plan: dict) -> str:
+    """One small Foundry call: explain WHY the plan is ordered the way it is.
+
+    Sends only the compact action list (rank/file/priority/reason) plus a one-line
+    diagnosis — never the full file contents — so the generation is tiny and fast
+    (the opposite of the old single-shot-all-files call that timed out). Returns
+    the rationale prose, or "" if the model returned nothing usable.
     """
     agent = client.agents.create_agent(
         model=os.environ["FOUNDRY_MODEL_DEPLOYMENT_NAME"],
         name="fix-my-vibe-planner",
-        instructions=PLANNER_INSTRUCTIONS,
+        instructions=PLANNER_RATIONALE_INSTRUCTIONS,
         tools=[],
     )
-    # MCP recommendations come from the curated catalogue (deterministic),
-    # not from model knowledge — the model only formats them into CLAUDE.md
-    mcp_recommendations = recommend_mcp_servers(scan_result.get("detected_stack", []))
-    task_message = (
-        "Analyse the scan result and research below. "
-        "Generate a complete ActionPlan JSON with actual file content for each action. "
-        "Base CLAUDE.md on the real readme_summary, commands, and stack found — not a template.\n\n"
-        f"{json.dumps({'scan_result': scan_result, 'research': research, 'mcp_recommendations': mcp_recommendations}, indent=2)}"
-    )
-    thread_id = create_thread_and_send(client, task_message)
-    # No tools, but generating full content for 5-6 files in one JSON takes
-    # well over 120 polling iterations (observed in_progress at the cap).
-    run_agent_with_tools(client, agent.id, thread_id, {}, max_iterations=400)
-    raw, reasoning = get_last_assistant_message_with_reasoning(client, thread_id)
-    result = parse_json_response(raw)
-    result["_reasoning_trace"] = reasoning
-    client.agents.delete_agent(agent.id)
-    _ensure_security_actions(result, scan_result)
-    _normalize_ranks(result)
-    return result
+    try:
+        action_summary = [
+            {
+                "rank": a.get("rank"),
+                "file": a.get("file"),
+                "priority": a.get("priority"),
+                "reason": a.get("reason"),
+            }
+            for a in plan.get("actions", [])
+        ]
+        task_message = (
+            "Diagnosis: "
+            + (scan_result.get("diagnosis_summary") or "(none)")
+            + "\n\nPlanned actions (already ordered):\n"
+            + json.dumps(action_summary, indent=2)
+            + "\n\nExplain the prioritisation in 2-4 sentences."
+        )
+        thread_id = create_thread_and_send(client, task_message)
+        # Tiny output (a few sentences) — a small cap is plenty and bounds the
+        # worst case if the model stalls.
+        run_agent_with_tools(client, agent.id, thread_id, {}, max_iterations=60)
+        return get_last_assistant_message(client, thread_id).strip()
+    finally:
+        client.agents.delete_agent(agent.id)
 
 
 def _normalize_ranks(plan: dict) -> None:
