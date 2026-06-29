@@ -13,3 +13,6 @@ build/
 .DS_Store
 *.bak
 !tests/fixtures/**/.env
+
+# Fix My Vibe timing traces (--trace / FMV_TRACE)
+.fmv-traces/

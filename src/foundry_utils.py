@@ -11,6 +11,8 @@ import time
 import logging
 from typing import Callable
 
+from src import tracing
+
 log = logging.getLogger(__name__)
 
 
@@ -38,23 +40,37 @@ def run_agent_with_tools(
 ) -> str:
     """
     Run a Foundry agent, handling function tool calls in a polling loop.
-    Rate-limited runs are retried with backoff (a new run on the same thread).
+    Rate-limited AND transient server errors are retried with backoff (a fresh run
+    on the same thread). Retrying is safe: every agent that still uses an LLM is
+    read-only / side-effect-free (the Executor writes deterministically, not here).
     Returns the final run status.
     """
+    _RETRYABLE = {"rate_limited", "transient_error"}
+    status = "rate_limited"
     for attempt in range(max_retries + 1):
         status = _run_once(client, agent_id, thread_id, tool_handlers, max_iterations)
-        if status != "rate_limited":
+        if status not in _RETRYABLE:
             return status
-        wait = 30 * (attempt + 1)
-        print(f"  ⚠ Foundry rate limit hit — retrying in {wait}s "
+        # Rate limits need a real cool-off; transient server errors clear quickly.
+        wait = (30 if status == "rate_limited" else 5) * (attempt + 1)
+        reason = "rate limit hit" if status == "rate_limited" else "transient server error"
+        print(f"  ⚠ Foundry {reason} — retrying in {wait}s "
               f"(attempt {attempt + 1}/{max_retries})")
         time.sleep(wait)
-    raise RuntimeError("Foundry run failed: rate limit persisted across retries")
+    raise RuntimeError(f"Foundry run failed: {status} persisted across {max_retries} retries")
 
 
 def _run_once(client, agent_id, thread_id, tool_handlers, max_iterations) -> str:
     run = client.agents.runs.create(thread_id=thread_id, agent_id=agent_id)
     iterations = 0
+
+    # Trace counters (only meaningful when tracing is enabled; cheap otherwise).
+    _t_start = time.perf_counter()
+    _model_rts = 1  # the initial run.create is the first wait on the model
+    _polls = 0
+    _poll_sleep = 0.0
+    _tool_count = 0
+    _tool_time = 0.0
 
     while str(run.status) in (
         "queued", "in_progress", "requires_action",
@@ -79,10 +95,15 @@ def _run_once(client, agent_id, thread_id, tool_handlers, max_iterations) -> str
                     args = {}
 
                 log.debug("Tool call: %s(%s)", fn_name, args)
+                _tc_start = time.perf_counter()
                 if fn_name in tool_handlers:
                     result = tool_handlers[fn_name](args)
                 else:
                     result = {"error": f"Unknown tool: {fn_name}"}
+                _tc_dur = time.perf_counter() - _tc_start
+                _tool_count += 1
+                _tool_time += _tc_dur
+                tracing.record("tool_call", dur=_tc_dur, name=fn_name)
 
                 outputs.append({
                     "tool_call_id": tc.id,
@@ -94,17 +115,34 @@ def _run_once(client, agent_id, thread_id, tool_handlers, max_iterations) -> str
                 run_id=run.id,
                 tool_outputs=outputs,
             )
+            _model_rts += 1  # submitting tool outputs resumes (waits on) the model
         else:
             time.sleep(0.5)
+            _poll_sleep += 0.5
+            _polls += 1
             run = client.agents.runs.get(thread_id=thread_id, run_id=run.id)
+
+    tracing.record(
+        "run", dur=time.perf_counter() - _t_start,
+        model_rts=_model_rts, polls=_polls, poll_sleep=round(_poll_sleep, 3),
+        tool_count=_tool_count, tool_time=round(_tool_time, 4),
+        iterations=iterations, final_status=str(run.status),
+    )
 
     if hasattr(run, "last_error") and run.last_error:
         error_code = (
             run.last_error.get("code") if isinstance(run.last_error, dict)
             else getattr(run.last_error, "code", None)
         )
-        if str(error_code) == "rate_limit_exceeded":
+        code = str(error_code)
+        if code == "rate_limit_exceeded":
             return "rate_limited"  # caller retries with backoff
+        # Transient server-side failures clear on a fresh run — signal a retry
+        # instead of aborting the whole pipeline (observed: 'server_error' on the
+        # Researcher killed an otherwise-healthy run mid-demo).
+        if code in ("server_error", "service_unavailable", "server_unavailable"):
+            log.warning("Transient Foundry error (%s) — will retry", code)
+            return "transient_error"
         log.error("Run failed: %s", run.last_error)
         raise RuntimeError(f"Foundry run failed: {run.last_error}")
     if iterations >= max_iterations:
@@ -211,6 +249,7 @@ def parse_json_response(text: str) -> dict:
 
 def create_thread_and_send(client, message: str) -> str:
     """Create a thread, send a user message, return thread_id."""
-    thread = client.agents.threads.create()
-    client.agents.messages.create(thread_id=thread.id, role="user", content=message)
-    return thread.id
+    with tracing.timed("thread_create", kind="thread_create"):
+        thread = client.agents.threads.create()
+        client.agents.messages.create(thread_id=thread.id, role="user", content=message)
+        return thread.id

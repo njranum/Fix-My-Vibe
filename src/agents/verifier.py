@@ -102,13 +102,26 @@ def _get_tool_definitions() -> list[dict]:
 
 
 def _make_tool_handlers(project_path: str) -> dict:
+    # The model occasionally emits a malformed tool call with missing arguments
+    # (observed: verify_file({})). A bare args["relative_path"] then raises
+    # KeyError inside the polling loop and aborts the whole pipeline AFTER files
+    # were already written. Return a structured error instead so the run survives
+    # and the model can correct itself on the next turn.
+    def _verify_file(args: dict):
+        rel = args.get("relative_path")
+        if not rel:
+            return {"error": "verify_file requires 'relative_path'"}
+        return verify_file(project_path, rel, args.get("expected_sections", []))
+
+    def _read_context(args: dict):
+        filename = args.get("filename")
+        if not filename:
+            return {"error": "read_existing_context_file requires 'filename'"}
+        return read_existing_context_file(project_path, filename)
+
     return {
-        "verify_file": lambda args: verify_file(
-            project_path, args["relative_path"], args.get("expected_sections", [])
-        ),
-        "read_existing_context_file": lambda args: read_existing_context_file(
-            project_path, args["filename"]
-        ),
+        "verify_file": _verify_file,
+        "read_existing_context_file": _read_context,
     }
 
 
