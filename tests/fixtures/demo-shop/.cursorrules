@@ -1,0 +1,4 @@
+# Cursor rules — demo-shop
+- Use type hints on all functions.
+- Write tests with pytest.
+- Keep route handlers small; push logic into helpers.
