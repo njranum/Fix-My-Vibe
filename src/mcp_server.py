@@ -22,7 +22,9 @@ Protocol note: stdio MCP uses stdout for the JSON-RPC channel. The underlying ag
 print progress to stdout, so every phase call is wrapped in redirect_stdout(stderr).
 """
 
+import os
 import sys
+import hashlib
 import contextlib
 from pathlib import Path
 
@@ -53,6 +55,53 @@ def _quiet():
     """Redirect agent stdout chatter to stderr so it never corrupts the JSON-RPC
     channel on stdout."""
     return contextlib.redirect_stdout(sys.stderr)
+
+
+# In-process cache of the most recent plan per project. The diagnose+plan phase
+# (Researcher + Planner + Remediator — the expensive LLM work) is identical between
+# propose_fixes and apply_fixes, so apply reuses the plan propose just computed
+# instead of re-running it. Guarded by a file signature: any change to the project
+# invalidates the cache, so a stale plan is never applied.
+_plan_cache: dict[str, dict] = {}
+
+_SIG_SKIP_DIRS = {".git", "__pycache__", ".venv", "venv", "node_modules",
+                  ".pytest_cache", ".mypy_cache", ".ruff_cache", "dist", "build"}
+
+
+def _project_signature(project_path: str) -> str:
+    """A cheap fingerprint of the project's files (relative path + size + mtime).
+    Changes whenever any file is added, removed, or edited — so a cached plan is
+    reused only while the project is untouched (e.g. between propose and apply)."""
+    root = Path(project_path)
+    parts: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in _SIG_SKIP_DIRS]
+        for name in filenames:
+            if name.endswith(".bak"):
+                continue
+            fp = Path(dirpath) / name
+            try:
+                st = fp.stat()
+            except OSError:
+                continue
+            parts.append(f"{fp.relative_to(root)}:{st.st_size}:{st.st_mtime_ns}")
+    parts.sort()
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
+
+def _cached_plan_phase(project_path: str, mode: str) -> dict:
+    """run_plan_phase, memoised per (resolved path, mode) and guarded by the project
+    signature. Reuses propose_fixes' plan in apply_fixes when nothing changed in
+    between, saving a full re-run of the LLM plan phase. Errors are never cached."""
+    key = str(Path(project_path).resolve())
+    sig = _project_signature(project_path)
+    hit = _plan_cache.get(key)
+    if hit and hit["mode_arg"] == mode and hit["signature"] == sig:
+        return hit["plan_phase"]
+    plan_phase = run_plan_phase(project_path, mode=mode)
+    if "error" not in plan_phase:
+        _plan_cache[key] = {"signature": sig, "mode_arg": mode, "plan_phase": plan_phase}
+    return plan_phase
 
 
 def _strip_reasoning(obj):
@@ -148,7 +197,7 @@ def propose_fixes(project_path: str, mode: str = "auto") -> dict:
         mode: "auto" (default), "local", or "foundry".
     """
     with _quiet():
-        plan_phase = run_plan_phase(project_path, mode=mode)
+        plan_phase = _cached_plan_phase(project_path, mode)
     if "error" in plan_phase:
         return plan_phase
 
@@ -176,7 +225,7 @@ async def apply_fixes(project_path: str, ctx: Context, mode: str = "auto") -> di
         mode: "auto" (default), "local", or "foundry".
     """
     with _quiet():
-        plan_phase = run_plan_phase(project_path, mode=mode)
+        plan_phase = _cached_plan_phase(project_path, mode)
     if "error" in plan_phase:
         return plan_phase
 
