@@ -230,8 +230,8 @@ re-running a failed LLM agent has no double-write risk.
 
 ## Demo fixture & validation (2026-06-29)
 `tests/fixtures/demo-shop` — purpose-built to demo Foundry IQ. 5 detected problems:
-missing CLAUDE.md, exposed `.env`, missing `.cursorignore`, hardcoded secret
-(`app.py:9`), SQL injection (`app.py:17`); two AI tools (Cursor + Claude Code).
+missing CLAUDE.md, exposed `.env`, hardcoded secret (`app.py:9`), SQL injection
+(`app.py:17`), and Flask debug mode left on (`app.py`). Single tool (Claude Code).
 
 Validated on the real cloud pipeline (o4-mini + Azure AI Search KB):
 - **Foundry IQ exercised:** 5 grounded `search_security_kb` queries per run; the
@@ -245,8 +245,25 @@ Validated on the real cloud pipeline (o4-mini + Azure AI Search KB):
   it emits a verified in-place fix for the SQL injection vs. only reporting it in
   SECURITY.md is non-deterministic — both outcomes are correct).
 
-Note for demo: fix count may show 6-8 actions depending on remediator output; all
-are verified before applying.
+Note for demo: fix count varies slightly run-to-run depending on remediator output;
+all are verified before applying. (PROMPTS.md was later removed as an output — it was
+the only action not tied to a detected problem; see below.)
+
+### MCP plan caching (2026-07-02)
+The Claude Code demo calls `scan_project` → `propose_fixes` → `apply_fixes`. Both
+`propose_fixes` and `apply_fixes` ran the full diagnose+plan phase (Researcher +
+Planner + Remediator), so the expensive LLM plan ran **twice** per demo (~155s each
+observed). `mcp_server` now caches the plan per project, guarded by a file signature
+(`_project_signature`): `apply_fixes` reuses the plan `propose_fixes` just computed
+unless the project changed. Verified: 2nd `propose` on an unchanged project returns in
+0.00s vs 155s, identical plan. Cuts a full plan phase off the demo (~6.5min → ~3.5min).
+
+### PROMPTS.md output removed (2026-06-29)
+The auto-generated PROMPTS.md "prompt library" was cut. Unlike every other action it
+wasn't fixing a detected problem — it was prescribed whenever AI tools were present —
+and its value (project conventions for the AI) is already covered by CLAUDE.md. Removed
+from the planner (`run` + `_ensure_security_actions`), deleted `_generate_prompts_md`,
+and dropped the now-unused `has_prompts_md` scanner field.
 
 ## Next immediate task
 1. Verifier (~29s) — mostly mechanical file/section checks; deterministic
