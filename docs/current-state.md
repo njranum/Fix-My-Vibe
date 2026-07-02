@@ -102,7 +102,7 @@ This is the actual to-do list to get from "works on my machine" to "clean demo p
 
 3. **Fix the setup template (`.env.example`).** It's missing the three `AZURE_SEARCH_*` variables the knowledge base actually needs, so anyone following it would get a broken Foundry mode. Fast fix, big payoff for reproducibility.
 
-4. **Pick a clean demo project.** The current test fixture detects *no* AI tools, so local mode only produced 2 files in my run. For a demo you want a sample project where tools *are* detected, so the fuller output set (`CLAUDE.md`, `.cursorrules`, `.cursorignore`, `PROMPTS.md`, `SECURITY.md`, `.gitignore`) all show up and the tool looks impressive.
+4. **Pick a clean demo project.** The current test fixture detects *no* AI tools, so local mode only produced 2 files in my run. For a demo you want a sample project where tools *are* detected, so the fuller output set (`CLAUDE.md`, `.cursorrules`, `.cursorignore`, `SECURITY.md`, `.gitignore`) all show up and the tool looks impressive. (Use `tests/fixtures/demo-shop` — it's purpose-built for this.)
 
 5. **(Nice to have) A couple of real automated tests.** Right now there are only smoke scripts and fixtures, no proper test suite. Not essential for a personal project, but a small `pytest` file or two reads well to anyone reviewing the repo.
 

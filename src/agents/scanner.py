@@ -72,13 +72,8 @@ def run(input: dict) -> dict:
             "patterns AI assistants commonly introduce."
         )
 
-    # PROMPTS.md is a Fix My Vibe output, not a tool config — track presence so
-    # the Planner offers to create it only when missing
-    has_prompts_md = bool(read_existing_context_file(project_path, "PROMPTS.md").get("exists"))
-
     return {
         "project_path": detection.get("project_path", project_path),
-        "has_prompts_md": has_prompts_md,
         "detected_tools": tools,
         "tool_evidence": detection.get("tool_evidence", {}),
         "detected_stack": stack,

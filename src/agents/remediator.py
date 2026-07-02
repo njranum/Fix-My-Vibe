@@ -38,11 +38,15 @@ TIER_C_TYPES = frozenset({"hardcoded_secret"})
 REMEDIABLE_TYPES = TIER_B_TYPES | TIER_C_TYPES
 
 # finding type -> (KB query text, threat_filter)
+# Tier-B/C types drive both remediation AND SECURITY.md grounding; the last two are
+# grounding-only (deterministic Tier-A fixes) but still want relevant KB sources.
 _KB_QUERY = {
     "sql_injection": ("SQL injection fix parameterised query bound parameters", "injection"),
     "code_injection": ("eval exec code injection safe alternative ast.literal_eval", "injection"),
     "shell_injection_risk": ("shell=True command injection subprocess argument list shlex", "injection"),
     "hardcoded_secret": ("hardcoded secret api key move to environment variable rotate", "secrets"),
+    "debug_enabled": ("debug mode enabled production security risk disable framework", "config"),
+    "tls_verification_disabled": ("TLS certificate verification disabled requests verify security", "config"),
 }
 
 _ROTATION_NOTE = "Rotate this credential immediately — it must be considered compromised."
@@ -246,10 +250,16 @@ def _attach_source(findings: list[dict], project_path: str) -> list[dict]:
     return out
 
 
-def run_with_foundry(client, scan_result: dict, start_rank: int = 1, kb_search_fn=None):
+def run_with_foundry(client, scan_result: dict, start_rank: int = 1, kb_search_fn=None,
+                     kb_context: dict | None = None):
     """Generate verified Tier-B/C remediations via one batched LLM run grounded in the
     KB. Returns (actions, next_rank). Safe-by-default: any failure yields no actions
     rather than killing the plan.
+
+    kb_context may be supplied by the caller (the orchestrator fetches it once for
+    both SECURITY.md grounding and remediation, avoiding a duplicate KB round-trip);
+    if omitted it's fetched here. A superset keyed by more finding types is fine —
+    only the remediable types are looked up.
     """
     if kb_search_fn is None:
         from src.agents.researcher import kb_search as kb_search_fn
@@ -259,7 +269,8 @@ def run_with_foundry(client, scan_result: dict, start_rank: int = 1, kb_search_f
         return [], start_rank
 
     stack = primary_stack(scan_result.get("detected_stack", []))
-    kb_context = fetch_kb_context({f["type"] for f in findings}, stack, kb_search_fn)
+    if kb_context is None:
+        kb_context = fetch_kb_context({f["type"] for f in findings}, stack, kb_search_fn)
     findings_with_src = _attach_source(findings, scan_result.get("project_path", ""))
 
     agent = client.agents.create_agent(

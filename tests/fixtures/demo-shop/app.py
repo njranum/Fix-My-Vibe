@@ -13,9 +13,8 @@ STRIPE_SECRET_KEY = "sk-live_51MzQ8s2eZvKYlo2CkAaBbCcDdEeFfGgHh"
 def search_products():
     name = request.args.get("name", "")
     conn = sqlite3.connect("shop.db")
-    # Builds SQL by dropping user input straight into the query string.
-    query = f"SELECT id, title, price FROM products WHERE name = '{name}'"
-    rows = conn.execute(query).fetchall()
+    # SQL built by dropping user input straight into the query string — injectable.
+    rows = conn.execute(f"SELECT id, title, price FROM products WHERE name = '{name}'").fetchall()
     return jsonify([{"id": r[0], "title": r[1], "price": r[2]} for r in rows])
 
 
@@ -25,4 +24,5 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=8000)
+    # debug=True left on — handy locally, dangerous in production.
+    app.run(host="127.0.0.1", port=8000, debug=True)

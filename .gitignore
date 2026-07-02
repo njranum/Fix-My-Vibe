@@ -16,3 +16,6 @@ build/
 
 # Fix My Vibe timing traces (--trace / FMV_TRACE)
 .fmv-traces/
+
+# Fix My Vibe throwaway working copies (run harness + /fix-my-vibe command)
+.fmv-run/
