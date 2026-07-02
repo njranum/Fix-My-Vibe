@@ -44,6 +44,31 @@ def test_security_md_still_generated(project):
     assert any(a["file"] == "SECURITY.md" for a in plan["actions"])
 
 
+def test_security_md_kb_grounding():
+    """SECURITY.md gains a KB-sourced References section when kb_context is supplied
+    (Foundry mode), and omits it otherwise (local mode). This is the deterministic
+    Foundry-IQ signal — it renders on every run with findings, independent of whether
+    the LLM remediator emitted a cited patch. Summary/Next steps must survive so the
+    verifier's expected sections still pass."""
+    from src.agents.planner import _generate_security_md
+
+    scan_result = {
+        "project_path": "/tmp/x",
+        "code_security_findings": [
+            {"type": "hardcoded_secret", "file": "app.py", "line": 9, "severity": "high",
+             "description": "Hardcoded secret", "snippet": "KEY = '...'",
+             "recommendation": "Load from env"},
+        ],
+    }
+    assert "## References" not in _generate_security_md(scan_result)
+
+    kb = {"hardcoded_secret": [{"title": "OWASP - Secrets Management Cheat Sheet", "url": ""}]}
+    grounded = _generate_security_md(scan_result, kb_context=kb)
+    assert "## References" in grounded
+    assert "OWASP - Secrets Management Cheat Sheet" in grounded
+    assert "## Summary" in grounded and "## Next steps" in grounded
+
+
 def test_apply_only_confirmed_remediations(project):
     _, plan = _plan(project)
     rem = [a for a in plan["actions"] if a.get("action") == "remediate"]
@@ -137,22 +162,23 @@ def test_multiple_fixes_same_file_all_apply(tmp_path):
     compile(out, "app.py", "exec")
 
 
-def test_foundry_augment_adds_tier_a_even_if_remediator_fails(project):
-    """The Foundry plan augmentation must add deterministic Tier-A fixes and tolerate
-    a remediator failure (no client) without losing the rest of the plan."""
+def test_foundry_augment_tolerates_remediator_failure(project):
+    """_augment_with_remediations adds only the KB-grounded Tier-B/C fixes (via the
+    remediator). Tier-A deterministic fixes come from the planner now (see D-P1), so
+    _augment must NOT re-add them (that caused duplicate remediations). It must also
+    swallow a remediator failure without losing the rest of the plan or breaking ranks.
+    """
     from src.orchestrator import _augment_with_remediations
 
     scan = scanner.run({"project_path": str(project)})
     plan = {"actions": [{"rank": 1, "action": "create", "file": "SECURITY.md",
                          "content": "x", "priority": "high"}]}
     # object() is not a real Foundry client → remediator.run_with_foundry raises,
-    # which _augment must swallow.
+    # which _augment must swallow, leaving the config plan intact.
     _augment_with_remediations(plan, scan, client=object())
 
-    rem = [a for a in plan["actions"] if a.get("action") == "remediate"]
-    types = {a["finding_type"] for a in rem}
-    assert types == {"tls_verification_disabled", "debug_enabled"}  # Tier A landed
-    # Ranks stay sequential 1..N after augmentation.
+    # No Tier-A (or any) remediations injected here — that's the planner's job.
+    assert [a["file"] for a in plan["actions"]] == ["SECURITY.md"]
     assert [a["rank"] for a in plan["actions"]] == list(range(1, len(plan["actions"]) + 1))
 
 

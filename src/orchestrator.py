@@ -91,12 +91,14 @@ def run_plan_phase(project_path: str, mode: str = "auto", verbose: bool = False)
 
 
 def _augment_with_remediations(plan_result: dict, scan_result: dict, client) -> None:
-    """Append code-remediation actions to a Foundry plan: Tier-A deterministic
-    (mode-independent) + Tier-B/C KB-grounded (LLM). Re-normalizes ranks so the
-    elicitation checkboxes stay 1..N. Defensive: a remediator failure logs and
-    leaves the plan otherwise intact (config fixes + SECURITY.md still stand).
+    """Append the KB-grounded Tier-B/C code remediations (LLM) to a Foundry plan.
+    Re-normalizes ranks so the elicitation checkboxes stay 1..N. Defensive: a
+    remediator failure logs and leaves the plan intact (config fixes + SECURITY.md
+    still stand).
 
-    Local mode already adds Tier A inside planner.run, so this is Foundry-only.
+    Tier-A deterministic remediations are already in the plan: the Foundry planner
+    delegates to planner.run() (see D-P1), which builds them. Adding them again here
+    would double every Tier-A fix — so this only runs the Tier-B/C remediator.
     """
     from src.agents import planner, remediator
     from src.tools.security_scan import scan_security_patterns
@@ -104,21 +106,39 @@ def _augment_with_remediations(plan_result: dict, scan_result: dict, client) -> 
     actions = plan_result.setdefault("actions", [])
     next_rank = len(actions) + 1
 
-    # Code findings are DETERMINISTIC facts (D8): in Foundry mode scan_result has been
-    # round-tripped through the LLM, which doesn't reliably preserve exact file/line —
-    # and remediation needs those to locate the code. Re-derive from the scanner so
-    # both tiers work off ground truth, not the model's paraphrase.
+    # Remediation needs exact file/line to locate the code. The scanner is
+    # deterministic, so re-derive findings from it to be certain they're ground truth.
     project_path = scan_result.get("project_path", "")
     if project_path:
         det = scan_security_patterns(project_path)
         if "findings" in det:
             scan_result = {**scan_result, "code_security_findings": det["findings"]}
 
-    tier_a, next_rank = planner._build_remediation_actions(scan_result, next_rank)
-    actions.extend(tier_a)
+    # Fetch KB context ONCE (per finding type) and use it for two things:
+    #  1. Ground SECURITY.md with a References section — deterministic, so the Foundry
+    #     IQ sources show on EVERY run, not only when the LLM remediator emits a patch.
+    #  2. Feed the remediator (avoids a duplicate KB round-trip).
+    findings = scan_result.get("code_security_findings", [])
+    kb_context: dict = {}
+    if findings:
+        from src.agents.researcher import kb_search
+        stack = remediator.primary_stack(scan_result.get("detected_stack", []))
+        try:
+            kb_context = remediator.fetch_kb_context(
+                {f.get("type") for f in findings if f.get("type")}, stack, kb_search
+            )
+        except Exception as e:
+            print(f"  KB grounding unavailable ({e}) — SECURITY.md stands without sources")
+        if kb_context:
+            sec = next((a for a in actions if a.get("file") == "SECURITY.md"), None)
+            if sec is not None:
+                sec["content"] = planner._generate_security_md(scan_result, kb_context=kb_context)
+                sec["estimated_tokens"] = len(sec["content"]) // 4
 
     try:
-        tier_bc, next_rank = remediator.run_with_foundry(client, scan_result, next_rank)
+        tier_bc, next_rank = remediator.run_with_foundry(
+            client, scan_result, next_rank, kb_context=kb_context or None
+        )
         actions.extend(tier_bc)
     except Exception as e:
         print(f"  Remediator unavailable ({e}) — Tier-B/C findings remain in SECURITY.md")
