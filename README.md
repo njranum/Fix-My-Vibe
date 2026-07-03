@@ -15,16 +15,14 @@ It runs as an **MCP server**, so an agent like Claude Code or Copilot Chat can
 call it as a set of tools and do the work in place. The same engine also ships as
 a standalone `fix-my-vibe` CLI.
 
-<!-- HERO VIDEO. GitHub only plays videos hosted on its own asset CDN, not repo files —
-     so this is wired up once, by hand: drag docs/media/demo-e2e.mp4 into a GitHub PR or
-     issue comment, wait for the upload, copy the
-     https://github.com/<org>/<repo>/assets/... URL it produces, and paste that URL on its
-     own line directly below this comment (GitHub auto-embeds a player). -->
+<!-- HERO VIDEO — hosted on GitHub's asset CDN (the URL below auto-embeds a player). To
+     replace it, upload a new docs/media/demo-e2e.mp4 via a PR/issue comment and swap the URL. -->
+
+https://github.com/user-attachments/assets/8b681791-c1e6-48b1-ac96-1f5fdc691284
 
 > 📹 **Demo video** — an 80-second end-to-end run: ask Claude Code to *"fix my vibe"* on a
 > messy project → scan → a ranked plan with OWASP citations → a confirmation checkbox per
-> fix → only the ticked fixes written → verified. *(Inline player appears once the asset
-> URL is pasted above.)*
+> fix → only the ticked fixes written → verified.
 
 ---
 
