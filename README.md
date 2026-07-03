@@ -25,6 +25,8 @@ https://github.com/user-attachments/assets/8b681791-c1e6-48b1-ac96-1f5fdc691284
 > messy project → scan → a ranked plan with OWASP citations → a confirmation checkbox per
 > fix → only the ticked fixes written → verified.
 
+**Contents:** [Why it's different](#why-its-different) · [How it works](#how-it-works) · [Quick start](#quick-start) · [What it generates](#what-it-generates) · [Running modes](#running-modes) · [Performance](#performance) · [Safety](#safety-guarantees) · [Development](#development)
+
 ---
 
 ## Why it's different
@@ -47,9 +49,9 @@ https://github.com/user-attachments/assets/8b681791-c1e6-48b1-ac96-1f5fdc691284
   interpolation, disabled TLS verification, `debug=True`, `shell=True`. Mechanical cases are
   fixed deterministically offline; semantic ones are grounded in the knowledge base. Every
   edit is a confirmed diff, backed up, and re-verified — and `--undo` rolls it all back.
-- **Grounded, not guessed.** In Foundry mode, advice and code fixes are backed by a curated
-  knowledge base of authoritative sources (OWASP / CWE / NIST) via Azure AI Search — not
-  just the model's memory.
+- **Grounded, not guessed — Foundry IQ.** In Foundry mode, advice and code fixes are backed
+  by a curated knowledge base of authoritative sources (OWASP / CWE / NIST) retrieved over
+  Azure AI Search — **Foundry IQ** grounding each fix in a real source, not the model's memory.
 - **It degrades gracefully.** Fully offline in local mode; smarter when you plug in Azure,
   and it falls back to local automatically if Azure is unreachable.
 
@@ -72,14 +74,19 @@ Foundry mode:**
 
 ```mermaid
 flowchart LR
-    Scan["1 · Scan"] --> Research["2 · Research"] --> Plan["3 · Plan"] --> Rem["4 · Remediate"]
-    Rem --> Gate{"You confirm<br/>which fixes"}
-    Gate -->|selected only| Apply["5 · Apply"] --> Verify["6 · Verify"]
-    Gate -->|decline| Stop["Nothing written"]
+    Scan["1 · Scan"]:::det --> Research["2 · Research"]:::llm --> Plan["3 · Plan"]:::mix --> Rem["4 · Remediate"]:::mix
+    Rem --> Gate{"You confirm<br/>which fixes"}:::gate
+    Gate -->|selected only| Apply["5 · Apply"]:::det --> Verify["6 · Verify"]:::mix
+    Gate -->|decline| Stop["Nothing written"]:::stop
 
-    classDef write fill:#fde,stroke:#c39
-    class Apply write
+    classDef det fill:#e6f4ea,stroke:#34a853,color:#0b3d1a
+    classDef llm fill:#e8f0fe,stroke:#1a73e8,color:#0b2a5b
+    classDef mix fill:#fef7e0,stroke:#f9ab00,color:#5c4400
+    classDef gate fill:#fce8e6,stroke:#ea4335,color:#5c1a12
+    classDef stop fill:#f1f3f4,stroke:#9aa0a6,color:#3c4043
 ```
+
+🟩 deterministic Python (offline) · 🟦 LLM reasoning (Foundry IQ) · 🟨 both · the **Apply** stage is the only writer
 
 | Stage | What it does | Engine | Touches disk? |
 |-------|--------------|--------|:---:|
@@ -190,8 +197,8 @@ flowchart LR
   `verify=False` → `True`), the confirmation gate, and verification all run offline with no
   LLM and no network — as does the full MCP `scan` / `propose` / `apply` flow.
 - **Foundry mode** is that *same* deterministic pipeline, plus the LLM used only where it
-  reasons: the **Researcher** (choosing and grounding best practices in the Azure AI Search
-  knowledge base, with Tavily web search as a fallback), the **semantic code remediation**
+  reasons: the **Researcher** (choosing and grounding best practices in the **Foundry IQ**
+  knowledge base over Azure AI Search, with Tavily web search as a fallback), the **semantic code remediation**
   (SQL injection, hardcoded secrets, `eval`/`exec`, `shell=True`), the **Planner's
   prioritisation rationale**, and a **qualitative verification** pass. It engages
   automatically when `FOUNDRY_PROJECT_ENDPOINT` is set.
