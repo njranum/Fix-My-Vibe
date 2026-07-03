@@ -8,7 +8,11 @@ version = "0.1.0"
 description = "Multi-agent AI coding tool setup diagnostics"
 requires-python = ">=3.11"
 dependencies = [
-    "azure-ai-projects>=1.0.0",
+    # Pinned exactly: the agents API this project uses (client.agents.create_agent)
+    # exists only on the 1.0.0b* line. A loose ">=1.0.0" pulls the 2.x release, whose
+    # AgentsOperations dropped create_agent — breaking the whole Foundry path.
+    "azure-ai-projects==1.0.0b11",
+    "azure-ai-agents==1.2.0b6",
     "azure-identity>=1.15.0",
     "python-dotenv>=1.0.0",
 ]
