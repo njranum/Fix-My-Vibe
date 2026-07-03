@@ -15,11 +15,16 @@ It runs as an **MCP server**, so an agent like Claude Code or Copilot Chat can
 call it as a set of tools and do the work in place. The same engine also ships as
 a standalone `fix-my-vibe` CLI.
 
-<!-- DEMO: 60–90s hero video — "fix my vibe" in Claude Code, end to end. -->
-<!-- ![End-to-end demo](docs/media/demo-e2e.mp4) -->
-> 📹 **Demo video placeholder** — see [`docs/media/README.md`](docs/media/README.md)
-> for the asset list. Hero clip: ask Claude Code to *"fix my vibe"* → scan →
-> checkboxes → files written → verified.
+<!-- HERO VIDEO. GitHub only plays videos hosted on its own asset CDN, not repo files —
+     so this is wired up once, by hand: drag docs/media/demo-e2e.mp4 into a GitHub PR or
+     issue comment, wait for the upload, copy the
+     https://github.com/<org>/<repo>/assets/... URL it produces, and paste that URL on its
+     own line directly below this comment (GitHub auto-embeds a player). -->
+
+> 📹 **Demo video** — an 80-second end-to-end run: ask Claude Code to *"fix my vibe"* on a
+> messy project → scan → a ranked plan with OWASP citations → a confirmation checkbox per
+> fix → only the ticked fixes written → verified. *(Inline player appears once the asset
+> URL is pasted above.)*
 
 ---
 
@@ -87,8 +92,7 @@ flowchart TD
     M -->|nothing found| D["Ask the user once"]
 ```
 
-<!-- DEMO: GIF of `claude mcp add` + `claude mcp list` showing Connected. -->
-> 🎬 **MCP setup GIF placeholder** — `docs/media/mcp-setup.gif`
+![Registering the MCP server — claude mcp add fix-my-vibe, then claude mcp list showing fix-my-vibe Connected](docs/media/mcp-setup.gif)
 
 ---
 
@@ -135,9 +139,12 @@ The server exposes three tools:
 See [`docs/MCP_SERVER.md`](docs/MCP_SERVER.md) for registration scope, transport
 choices, and a full interactive test script.
 
-<!-- DEMO: screenshot of the elicitation checkbox prompt. -->
-> 🖼️ **Screenshot placeholder** — `docs/media/elicitation-prompt.png` (the
-> confirmation checkboxes — the safety gate in action).
+![The apply_fixes confirmation prompt — one checkbox per proposed fix; untick anything and it is never written](docs/media/elicitation-prompt.png)
+
+Tick the fixes you want; the rest is never written. Here's an example of what it
+generates — a full `SECURITY.md` audit of the findings with OWASP/CWE citations:
+
+![An example generated SECURITY.md — a security audit with OWASP and CWE citations](docs/media/generated-security-md.png)
 
 ---
 
