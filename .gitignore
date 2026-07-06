@@ -19,3 +19,6 @@ build/
 
 # Fix My Vibe throwaway working copies (run harness + /fix-my-vibe command)
 .fmv-run/
+
+# Hero demo video — hosted via GitHub's asset CDN (too big to preview/embed as a repo file)
+docs/media/*.mp4
