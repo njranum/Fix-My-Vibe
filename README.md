@@ -59,34 +59,14 @@ https://github.com/user-attachments/assets/8b681791-c1e6-48b1-ac96-1f5fdc691284
 
 ## How it works
 
-Two front doors, one shared engine:
+Two front doors, one shared engine — deterministic Python throughout, with the LLM used
+only where it genuinely reasons:
 
-```mermaid
-flowchart LR
-    CLI["fix-my-vibe CLI"] --> ENG
-    MCP["MCP server<br/>(Claude Code, Copilot…)"] --> ENG
-    ENG["Shared engine<br/>(orchestrator)"] --> OUT["Tailored config + code fixes<br/>(only after you confirm)"]
-```
+![Fix My Vibe architecture: two front doors — Claude Code (MCP) and the fix-my-vibe CLI — feed one deterministic Python engine running Scan · Research · Plan · Remediate · a you-confirm gate · Apply · Verify, grounded by Foundry IQ over Azure AI Search](docs/media/architecture.svg)
 
 The engine runs a read-only pipeline; a single confirmation gate sits between it and any
 writes. **Most stages are deterministic Python — only some call the LLM, and only in
-Foundry mode:**
-
-```mermaid
-flowchart LR
-    Scan["1 · Scan"]:::det --> Research["2 · Research"]:::llm --> Plan["3 · Plan"]:::mix --> Rem["4 · Remediate"]:::mix
-    Rem --> Gate{"You confirm<br/>which fixes"}:::gate
-    Gate -->|selected only| Apply["5 · Apply"]:::det --> Verify["6 · Verify"]:::mix
-    Gate -->|decline| Stop["Nothing written"]:::stop
-
-    classDef det fill:#e6f4ea,stroke:#34a853,color:#0b3d1a
-    classDef llm fill:#e8f0fe,stroke:#1a73e8,color:#0b2a5b
-    classDef mix fill:#fef7e0,stroke:#f9ab00,color:#5c4400
-    classDef gate fill:#fce8e6,stroke:#ea4335,color:#5c1a12
-    classDef stop fill:#f1f3f4,stroke:#9aa0a6,color:#3c4043
-```
-
-🟩 deterministic Python (offline) · 🟦 LLM reasoning (Foundry IQ) · 🟨 both · the **Apply** stage is the only writer
+Foundry mode** (🟩 deterministic Python, offline · 🟦 LLM reasoning, Foundry · 🟨 both):
 
 | Stage | What it does | Engine | Touches disk? |
 |-------|--------------|--------|:---:|
